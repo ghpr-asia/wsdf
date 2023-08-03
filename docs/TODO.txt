@@ -174,3 +174,11 @@ Use the "smoke-test" thing in build.rs
     case, we have a smoke.c file pulling in the headers we want. If that
     compiles, that means the headers and dynamic library can be resolved
     somehow. We don't need to clone down the whole wireshark repo in that case.
+
+Improve CI
+
+    Currently, we call Wireshark's debian setup script each time to set up some
+    system deps. Obviously in ci we don't need wireshark or tshark. So we
+    should prune the useless ones (e.g. alot of QT dependencies!)
+
+    This step is not too slow though, so it is not that important.
