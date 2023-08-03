@@ -1,3 +1,7 @@
+[![docs.rs](https://img.shields.io/badge/docs.rs-wsdf-latest)](https://docs.rs/wsdf)
+[![crates.io](https://img.shields.io/crates/v/wsdf.svg)](https://crates.io/crates/wsdf)
+[![CI](https://github.com/ghpr-asia/wsdf/actions/workflows/ci.yml/badge.svg)](https://github.com/ghpr-asia/wsdf/actions/workflows/ci.yml)
+
 **wsdf** is a proc-macro based framework to generate Wireshark dissectors from
 your Rust data types. Using wsdf, you can write dissectors in a declarative
 way, all from within Rust.
