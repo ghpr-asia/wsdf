@@ -28,7 +28,7 @@ jobs:
           cd ./epan-sys/wireshark && \
           mkdir -p build && \
           cd build && \
-          cmake -G ninja \
+          cmake -G Ninja \
             -DBUILD_androiddump=OFF \
             -DBUILD_capinfos=OFF \
             -DBUILD_captype=OFF \
@@ -56,6 +56,9 @@ jobs:
             .. && \
           ninja &&
           make install
+
+      - name: Check libwireshark.so
+        run: pkg-config --libs wireshark
 
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
