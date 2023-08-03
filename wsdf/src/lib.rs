@@ -2,7 +2,7 @@
 //! types. Using wsdf, you can write dissectors in a declarative way, all from within Rust.
 //!
 //! Examples can be found in the
-//! [GitHub repo](https://github.com/ghpr-asia/wsdf/tree/master/wsdf/examples/).
+//! [GitHub repo](https://github.com/ghpr-asia/wsdf/tree/main/wsdf/examples/).
 //!
 //! * [Getting started](#getting-started)
 //! * [Types](#types)
