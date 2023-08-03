@@ -23,6 +23,8 @@ DNS, showcased below.
 
 ![DNS dissector showcase](docs/dns_dissector.gif)
 
+wsdf has been tested on Linux against Wireshark 4.0.
+
 **License**
 
 <sup>

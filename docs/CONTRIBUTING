@@ -2,8 +2,8 @@ Thank you for thinking of contributing to wsdf. This document tries to give you
 an overview of the codebase. Please supplement this with the documentation on
 docs.rs for a fuller understanding.
 
-Before working on wsdf, please ensure that Wireshark version 4.0 is installed
-along with its header files. On some distros, this may be in a separate
+Before working on wsdf, ensure that Wireshark version 4.0 is installed along
+with its header files. On some distros, this may be in a separate
 wireshark-devel package.
 
 Some basic understanding of writing dissectors in C would help. See
