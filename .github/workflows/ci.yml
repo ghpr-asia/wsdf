@@ -10,14 +10,23 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Ideally, we could cache wireshark's source files using GitHub's cache
-      # action. Unfortunately, there is a bug when caching git submodules.
-      #
-      # See https://github.com/actions/checkout/discussions/1028
+      - name: Get wireshark commit hash
+        id: get-wireshark-hash
+        run: |
+          echo "hash=$(git submodule status epan-sys/wireshark | awk '{print $1;}')" >> $GITHUB_OUTPUT
+
+      - name: Cache wireshark
+        uses: actions/cache@v3
+        id: cache-wireshark
+        with:
+          path: epan-sys/wireshark
+          key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
+
       - name: Checkout wireshark
+        if: steps.cache-wireshark.outputs.cache-hit != 'true'
         run: git submodule update --init --recursive ./epan-sys/wireshark
 
-      - name: Set up wireshark
+      - name: Set up wireshark dependencies
         run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
 
       - name: Install ninja
@@ -55,7 +64,7 @@ jobs:
             -DBUILD_xxx2deb=OFF \
             .. && \
           ninja libwireshark.so && \
-          ninja install
+          sudo ninja install
 
       - name: Check libwireshark.so
         run: pkg-config --libs wireshark
