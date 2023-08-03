@@ -30,7 +30,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --all-features --no-deps
+          args: --all-targets --all-features --no-deps -- -Dwarnings
 
       - name: Run tests
         uses: actions-rs/cargo@v1
