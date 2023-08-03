@@ -843,19 +843,6 @@ pub mod tap {
     }
 }
 
-#[cfg(test)]
-mod compile_tests {
-    #[test]
-    fn run_all() {
-        let t = trybuild::TestCases::new();
-
-        t.pass("tests/simple/*.rs");
-        t.pass("tests/should_pass/*.rs");
-
-        t.compile_fail("tests/should_fail/*.rs");
-    }
-}
-
 pub type FieldsMap<T> = HashMap<String, Vec<T>>;
 
 /// A key-value store of fields saved. Each type is kept in its own multimap.
@@ -965,5 +952,18 @@ impl<'a> FieldsStore<'a> {
             .entry(filter.to_string())
             .or_default()
             .push(value);
+    }
+}
+
+#[cfg(test)]
+mod compile_tests {
+    #[test]
+    fn run_all() {
+        let t = trybuild::TestCases::new();
+
+        t.pass("tests/simple/*.rs");
+        t.pass("tests/should_pass/*.rs");
+
+        t.compile_fail("tests/should_fail/*.rs");
     }
 }
