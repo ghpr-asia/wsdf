@@ -25,7 +25,7 @@ jobs:
         id: cache-wireshark
         with:
           path: epan-sys/wireshark
-          key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
+          key: ${{ runner.os }}-wireshark-source-${{ steps.get-wireshark-hash.outputs.hash }}
 
       - name: Cache libwireshark.so
         uses: actions/cache@v3
@@ -34,7 +34,7 @@ jobs:
           path: |
             /usr/local/lib/libwireshark.so*
             /usr/local/lib/pkgconfig/wireshark.pc
-          key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
+          key: ${{ runner.os }}-wireshark-dylib-${{ steps.get-wireshark-hash.outputs.hash }}
 
       - name: Checkout wireshark
         if: steps.cache-wireshark.outputs.cache-hit != 'true'
