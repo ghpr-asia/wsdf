@@ -10,17 +10,24 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # We'll use the commit hash as the key for caching wireshark's repo
       - name: Get wireshark commit hash
         id: get-wireshark-hash
         run: |
           echo "hash=$(git submodule status epan-sys/wireshark | awk '{print $1;}')" >> $GITHUB_OUTPUT
 
-      - name: Cache wireshark
+      - name: Cache wireshark source
         uses: actions/cache@v3
         id: cache-wireshark
         with:
           path: epan-sys/wireshark
           key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
+
+      - name: Cache libwireshark.so
+        uses: actions/cache@v3
+        id: cache-libwireshark
+        with:
+          path: /usr/lib/libwireshark.so*
 
       - name: Checkout wireshark
         if: steps.cache-wireshark.outputs.cache-hit != 'true'
@@ -30,9 +37,11 @@ jobs:
         run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
 
       - name: Install ninja
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
         run: sudo apt-get install -y ninja-build
 
       - name: Build and install wireshark
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
         run: |
           cd ./epan-sys/wireshark && \
           mkdir -p build && \
@@ -67,7 +76,7 @@ jobs:
           sudo ninja install
 
       - name: Check libwireshark.so
-        run: pkg-config --libs wireshark
+        run: grep /usr/lib/libwireshark.so* && pkg-config --libs wireshark
 
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
