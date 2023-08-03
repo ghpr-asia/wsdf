@@ -6,17 +6,10 @@ their system. In the event that libwireshark.so cannot be found, this crate
 will build a dynamic library from source to link against, for the sake of
 compilation.
 
-**License**
+By default, pre-generated bindings are used. To produce the bindings at build
+time via bindgen, build this crate with the `bindgen` feature.
 
-<sup>
-Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
-2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
-</sup>
+In case pkg-config cannot tell us where to find libwireshark.so, a path to the
+directory containing the dynamic library can be set via the `WIRESHARK_LIB_DIR`
+environment variable.
 
-<br>
-
-<sub>
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-</sub>

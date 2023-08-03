@@ -1,4 +1,4 @@
-//! Rust bindings for the epan module of `libwireshark`.
+#![doc = include_str!("../README.md")]
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
