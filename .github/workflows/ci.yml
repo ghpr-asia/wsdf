@@ -10,6 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # We need this to cache the .so files in /usr/local/lib...
+      - name: Give tar root permissions
+        run: sudo chown root:wheel /bin/tar && sudo chmod u+s /bin/tar
+
       # We'll use the commit hash as the key for caching wireshark's repo
       - name: Get wireshark commit hash
         id: get-wireshark-hash
