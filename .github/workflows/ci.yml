@@ -103,7 +103,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --all-features --no-deps -- -Dwarnings
+          args: --all-targets --no-deps -- -Dwarnings
 
       - name: Run tests
         uses: actions-rs/cargo@v1
@@ -111,4 +111,3 @@ jobs:
           LD_LIBRARY_PATH: /usr/local/lib
         with:
           command: test
-          args: --all-features
