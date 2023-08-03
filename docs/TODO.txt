@@ -1,0 +1,176 @@
+Add logs to generated code
+
+    Currently, the generated code does not log anything. This makes it hard to
+    file bug reports and try to reproduce stuff.
+
+    We could use the `log` crate, but then we'd have to re-export both `log`
+    and something like `env_logger` from `wsdf`, so that the generated code can
+    call `wsdf::log::info!` etc.
+
+Handle all panics
+
+    The generated code panics in some places. These panics occur when an
+    invariant we expect is violated, and crash Wireshark when it happens.
+
+    An alternative is to use Wireshark's "Expert Item" fields, and just
+    highlight the error in Wireshark's UI instead of panicking.
+
+More flexible decoding for enums
+
+    Currently, enums must be "dispatched" based on the value of a previous
+    field. However, a user may wish to do this:
+
+    struct Order {
+        side: Side, // technically a u8
+        price: i32,
+        quantity: u64,
+    }
+
+    #[repr(u8)]
+    enum Side {
+        Bid,
+        Ask,
+        Unknown,
+    }
+
+    Suppose we implement From<u8> for Size. Maybe we can come up with some way
+    to support the above kind of syntax?
+
+Support multiple derive(Protocol) in one lib
+
+    This should technically be possible. Since a lib is a plugin, and a plugin
+    should be allowed to have multiple dissectors.
+
+    The `plugin_register` symbol (currently generated once per
+    derive(Protocol)) is the "entry point" for Wireshark to register our
+    plugin. To support multiple protocols in one lib, we would need to generate
+    exactly one `plugin_register` per lib, and register all the protocols
+    within that function.
+
+Support Wireshark flag types
+
+    This is pretty important, but we'll need to investigate a good syntax for
+    it. In the current sample DNS dissector, we technically have a field which
+    is to be interpreted as flags, but we're currently just displaying it as a
+    regular integer.
+
+    In https://www.wireshark.org/docs/wsdg_html_chunked/ChDissectAdd.html there
+    is some information on using Wireshark flags.
+
+Support "virtual" fields
+
+    These are fields which do not change the offset. Something like this
+
+    struct Foo {
+        #[wsdf(virtual)]
+        y: u8,
+        xs: [u8; 10],
+    }
+
+    would mean that y is the first byte, but xs is the first ten bytes. I.e. y
+    did not increment the offset by one byte.
+
+    We may also consider using Wireshark's `proto_item_set_generated` function
+    to mark the field as generated in the UI (it just adds square brackets).
+
+Add some quality of life shorthand attributes
+
+    Currently, to set an integer field to big endian, we need to do
+
+    #[wsdf(enc = "ENC_LITTLE_ENDIAN")]
+
+    which is quite verbose. We could consider having something like
+
+    #[wsdf(le)]
+
+    to mark a field as little endian. Some ideas are:
+
+    - le/be: endianness
+    - ascii: mark the field as an FT_STRING type
+    - trim: automatically trim white space or null bytes before displaying
+
+Emit code for trait impl even if errors occur
+
+    This helps to reduce error spam. Currently, if something goes wrong during
+    compilation, we'll get the actual error and most likely a lot of
+    "ProtocolField is not implemented for ..." messages.
+
+    This is because the generated code just contains errors. Instead, we could
+    consider generating dummy implementations for the traits too. Something
+    like:
+
+    // errors for the compiler to report generated as usual
+    // below, we also emit code for the trait impl
+    impl ProtocolField for _ {
+        fn dissect() { unimplemented!() }
+        // and so on...
+    }
+
+Collect more errors before giving up
+
+    Currently, our proc macro bails upon the first error it sees. So if we have
+    20 errors, we'd need to compile the code 20 times to see them.
+
+    An alternative is to use some kind of context struct, passed around to all
+    our functions, which holds a list of all errors encountered. That way, we
+    can report as many errors as possible in one go.
+
+Support adding stuff in columns
+
+    Wireshark has an "info" column (COL_INFO) where you can write arbitrary
+    stuff. Currently, we do not have a way to set what goes on there.
+
+    One way is to expose some methods on ProtocolField which users can call to
+    add stuff to the info column. These methods can be called inside taps,
+    decode_withs, or whatever.
+
+    #[derive(ProtocolField)]
+    struct MyProto {
+        #[wsdf(tap = "tap_fn")]
+        src_port: u16,
+    }
+
+    fn tap_fn(Field(x): Field) {
+        // perhaps something like this
+        MyProto::add_to_col(&format!("Source Port={x});
+    }
+
+    See
+    https://www.wireshark.org/docs/wsdg_html_chunked/ChDissectAdd.html#_improving_the_dissection_information
+    for how the COL_INFO can be used from C.
+
+
+Check attributes validity
+
+    Currently, we don't have an explicit step in the codegen process which
+    checks each field/variant/type for whether the attributes used are
+    completely valid. For example, currently we can have nonsensical things
+    like
+
+    #[wsdf(len_field = "x")]
+    x: u8,
+
+    because the len_field attribute is just ignored (since it does not apply to
+    u8 types). We should add an explicit step where all this stuff is checked.
+
+Use a Serde-like approach
+
+    Currently, we only use the ProtocolField trait for user defined types.
+    But what if we implemented it for u8, u16, etc.?
+
+    Then we could get rid of huge parts of the internal data model. When we see
+    a field, we don't care what its type is. We just set up some parameters and
+    call its dissect method.
+
+    This would be a somewhat large, experimental change.
+
+Use the "smoke-test" thing in build.rs
+
+    See https://github.com/rust-lang/libz-sys/blob/main/src/smoke.c and how
+    they use it in their build.rs.
+
+    Basically there may be funky situations where the libwireshark and its
+    headers are installed on the system but pkg config cannot find it. In that
+    case, we have a smoke.c file pulling in the headers we want. If that
+    compiles, that means the headers and dynamic library can be resolved
+    somehow. We don't need to clone down the whole wireshark repo in that case.

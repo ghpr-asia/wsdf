@@ -1,0 +1,5 @@
+error: unrecognized attribute
+ --> tests/should_fail/unknown_container_attr.rs:6:8
+  |
+6 | #[wsdf(foo = "bar")] // Unknown meta item
+  |        ^^^

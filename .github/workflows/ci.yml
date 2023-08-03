@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Ideally, we could cache wireshark's source files using GitHub's cache
+      # action. Unfortunately, there is a bug when caching git submodules.
+      #
+      # See https://github.com/actions/checkout/discussions/1028
+      - name: Checkout wireshark
+        run: git submodule update --init --recursive ./epan-sys/wireshark
+
+      - name: Set up wireshark
+        run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Run clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --all-features --no-deps
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-targets --all-features

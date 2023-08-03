@@ -1,0 +1,20 @@
+[package]
+name = "wsdf-derive"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Macro implementations for wsdf"
+homepage = "https://github.com/ghpr-asia/wsdf"
+documentation = "https://docs.rs/wsdf"
+repository = "https://github.com/ghpr-asia/wsdf"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+regex = "1.8"
+once_cell = "1.17"

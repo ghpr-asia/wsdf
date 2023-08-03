@@ -1,0 +1,5 @@
+error: this field cannot be used to dispatch enums
+ --> tests/should_fail/dispatch_based_on_struct.rs:9:5
+  |
+9 |     bar: Bar,
+  |     ^^^
