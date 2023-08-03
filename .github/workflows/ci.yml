@@ -54,8 +54,8 @@ jobs:
             -DBUILD_wireshark=OFF \
             -DBUILD_xxx2deb=OFF \
             .. && \
-          ninja &&
-          make install
+          ninja libwireshark.so && \
+          ninja install
 
       - name: Check libwireshark.so
         run: pkg-config --libs wireshark
