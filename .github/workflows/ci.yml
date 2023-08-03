@@ -33,6 +33,8 @@ jobs:
         with:
           path: |
             /usr/local/lib/libwireshark.so*
+            /usr/local/lib/libwiretap.so*
+            /usr/local/lib/libwsutil.so*
             /usr/local/lib/pkgconfig/wireshark.pc
           key: ${{ runner.os }}-wireshark-dylib-${{ steps.get-wireshark-hash.outputs.hash }}
 
