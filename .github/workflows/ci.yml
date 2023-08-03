@@ -10,6 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # We need this to cache the .so files in /usr/local/lib...
+      - name: Give tar root permissions
+        run: sudo chmod u+s /bin/tar
+
       # We'll use the commit hash as the key for caching wireshark's repo
       - name: Get wireshark commit hash
         id: get-wireshark-hash
@@ -23,6 +27,15 @@ jobs:
           path: epan-sys/wireshark
           key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
 
+      - name: Cache libwireshark.so
+        uses: actions/cache@v3
+        id: cache-libwireshark
+        with:
+          path: |
+            /usr/local/lib/libwireshark.so*
+            /usr/local/lib/pkgconfig/wireshark.pc
+          key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
+
       - name: Checkout wireshark
         if: steps.cache-wireshark.outputs.cache-hit != 'true'
         run: git submodule update --init --recursive ./epan-sys/wireshark
@@ -31,9 +44,11 @@ jobs:
         run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
 
       - name: Install ninja
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
         run: sudo apt-get install -y ninja-build
 
       - name: Build and install wireshark
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
         run: |
           cd ./epan-sys/wireshark && \
           mkdir -p build && \
