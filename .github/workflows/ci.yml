@@ -28,6 +28,7 @@ jobs:
         id: cache-libwireshark
         with:
           path: /usr/lib/libwireshark.so*
+          key: ${{ runner.os }}-${{ steps.get-wireshark-hash.outputs.hash }}
 
       - name: Checkout wireshark
         if: steps.cache-wireshark.outputs.cache-hit != 'true'
