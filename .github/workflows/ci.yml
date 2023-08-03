@@ -77,7 +77,7 @@ jobs:
           sudo ninja install
 
       - name: Check libwireshark.so
-        run: grep /usr/lib/libwireshark.so* && pkg-config --libs wireshark
+        run: grep /usr/local/lib/libwireshark.so* && pkg-config --libs wireshark
 
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -99,6 +99,8 @@ jobs:
 
       - name: Run tests
         uses: actions-rs/cargo@v1
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib
         with:
           command: test
           args: --all-features
