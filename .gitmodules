@@ -1,0 +1,3 @@
+[submodule "epan-sys/wireshark"]
+	path = epan-sys/wireshark
+	url = https://gitlab.com/wireshark/wireshark.git

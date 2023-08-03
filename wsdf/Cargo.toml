@@ -1,0 +1,35 @@
+[package]
+name = "wsdf"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+license = "MIT OR Apache-2.0"
+description = "Wireshark Dissector Framework"
+homepage = "https://github.com/ghpr-asia/wsdf"
+documentation = "https://docs.rs/wsdf"
+repository = "https://github.com/ghpr-asia/wsdf"
+readme = "README.md"
+keywords = ["wireshark", "dissectors"]
+categories = ["network-programming"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dev-dependencies]
+trybuild = { version = "1.0", features = ["diff"] }
+
+[dependencies]
+wsdf-derive = { path = "../wsdf-derive", version = "0.1.0" }
+epan-sys = { path = "../epan-sys", version = "0.1.0" }
+thiserror = "1.0"
+
+[[example]]
+name = "udp"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "moldudp64"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "dns"
+crate-type = ["cdylib"]

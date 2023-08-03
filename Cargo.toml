@@ -1,0 +1,2 @@
+[workspace]
+members = ["epan-sys", "wsdf-derive", "wsdf"]

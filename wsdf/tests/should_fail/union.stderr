@@ -1,0 +1,5 @@
+error: only structs can derive Protocol
+ --> tests/should_fail/union.rs:6:1
+  |
+6 | union MyUnion {
+  | ^^^^^

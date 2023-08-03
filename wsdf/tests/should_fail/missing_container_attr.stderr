@@ -1,0 +1,5 @@
+error: expected some way of registering with dissector table
+ --> tests/should_fail/missing_container_attr.rs:6:8
+  |
+6 | struct MyProtocol {
+  |        ^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: this field cannot be used to indicate length
+  --> tests/should_fail/repeat_based_on_vector.rs:10:5
+   |
+10 |     xs: Vec<u32>,
+   |     ^^

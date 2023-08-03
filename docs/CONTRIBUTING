@@ -1,0 +1,145 @@
+Thank you for thinking of contributing to wsdf. This document tries to give you
+an overview of the codebase. Please supplement this with the documentation on
+docs.rs for a fuller understanding.
+
+Before working on wsdf, ensure that Wireshark version 4.0 is installed along
+with its header files. On some distros, this may be in a separate
+wireshark-devel package.
+
+Some basic understanding of writing dissectors in C would help. See
+https://www.wireshark.org/docs/wsdg_html_chunked/ChDissectAdd.html for a
+tutorial.
+
+1. Crates Overview
+
+1.1 epan-sys
+
+The epan-sys crate uses bindgen to produce FFI bindings for some stuff in
+Wireshark's epan module. Not all header files are included at the moment -
+just the minimum needed for wsdf.
+
+The .h files actually included are listed in wrapper.h. If we need more
+types, functions, etc. from Wireshark, we can just add the respective .h
+files here.
+
+1.2. wsdf
+
+This is a thin crate which users are meant to install. It serves three
+purposes:
+
+    a. Re-exporting epan-sys and wsdf-derive
+
+    b. Defining the Protocol and ProtocolField traits which holds methods for
+       dissection and registration.
+
+       These traits currently have no practical use (in the sense that
+       we are the only ones who would use these traits). They mainly exist
+       so that any methods we define on the type can be namespaced to that
+       trait.
+
+    c. Exporting some helpers for our generated code to call.
+
+1.3. wsdf-derive
+
+All the code here is meant to take some syntax tree input and generate the
+code we need to dissect a packet. The modules are organized into layers.
+
+    - util: helper functions and types
+    - attributes: defines and parses attributes, e.g. #[wsdf(hide)]
+    - types: internal data model for types we care about, e.g. u8, bytes, etc.
+    - model: full data model for structs and enums
+    - crate root: ties everything together
+
+2. More on wsdf-derive
+
+The ProtocolField trait contains a dissect and register method, along with
+some other helpers. The dissect method dissects the type's fields, and the
+register method registers the type's fields.
+
+A top-down view of this whole thing can be seen in lib.rs, in the proc macro
+definition for ProtocolField (probably a function named derive_protocol_field).
+You would notice that we generate code for the dissect and register
+functions, and then wrap that all up in an impl block. You can follow the logic
+inwards to see how the rest of it works.
+
+2.1. Data model
+
+In the types module, we see a distinction defined between Primitive and
+Collection types. Note that this is not a perfect data model and it is hard to
+clearly define each.
+
+Every primitive type has two properties:
+
+    a. Its size is known before we reach the field
+    b. It can be unambiguously mapped to a type in Wireshark
+
+(The converse may not be true.) In any case, it suffices to think of
+them in the same way we think of primitive types in languages.
+
+The Collection types are always built from primitive types. For
+example, a U32 is a Primitive type, and a list of U32 would be a
+Collection type. Structs are also Collection types.
+
+At a higher level, in the model module, we have a few more types which are used
+to model user-defined types. As of July 2023, these are very poorly named so
+some explanation is due.
+
+    1. DataRoot: Each DataRoot corresponds to exactly one user-defined type
+       (either a struct or enum) which derives ProtocolField (or Protocol). The
+       "Root" does not imply that it is the protocol root.
+
+    2. DataTerminal: Each DataTerminal represents either a) the contents and
+       identifiers of a struct, or b) the contains and name of one enum
+       variant. Think of it like this: enum variants are kind of like structs,
+       but at the same time, not really. We need some abstraction to represent
+       the "contents" of one struct or one variant, which is the purpose of the
+       DataTerminal type.
+
+       DataTerminal itself is an enum with two variants.
+       DataTerminal::UnitTuple represents a tuple types with one item, and
+       DataTerminal::DataClass represents non-tuple types with named fields.
+       For example,
+
+       struct Timestamp(u64);
+
+       would be a UnitTuple. As for
+
+       enum Order {
+           Cancel(u64),
+           Buy {
+               price: i32,
+               quantity: u64,
+           },
+       }
+
+       Cancel would be a UnitTuple, but Buy would be a DataClass.
+
+    3. ProtoField: representation of a single field.
+
+2.2. Dissection and registration overview
+
+At a high level, the dissector has to:
+
+    1. Register all the fields when the plugin gets loaded
+    2. For each packet, dissect its fields and add them to the protocol tree
+
+In code, the ProtoField type implements two methods - dissection_instructions
+and registration_instructions - which are fully responsible for producing code
+to dissect/register that field. Reading the method should provide a sense of
+the steps involved.
+
+Dissecting or registering the entire type, then, is mostly just a matter of
+dissecting or registering each field in sequence.
+
+3. Tests and examples
+
+cargo test will run all tests.
+
+There are some regular unit tests scattered around. We also use the trybuild
+crate (https://docs.rs/trybuild/latest/trybuild/) to test if some kind of
+syntax compiles or not. The things to test are found in wsdf/tests/. Some are
+meant to compile, while some are meant to fail.
+
+We have some examples in wsdf/examples/. These are also useful for debugging
+the generated code via cargo expand.
+

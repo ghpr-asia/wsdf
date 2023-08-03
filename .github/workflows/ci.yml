@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # We need this to cache the .so files in /usr/local/lib...
+      - name: Give tar root permissions
+        run: sudo chmod u+s /bin/tar
+
+      # We'll use the commit hash as the key for caching wireshark's repo
+      - name: Get wireshark commit hash
+        id: get-wireshark-hash
+        run: |
+          echo "hash=$(git submodule status epan-sys/wireshark | awk '{print $1;}')" >> $GITHUB_OUTPUT
+
+      - name: Cache wireshark source
+        uses: actions/cache@v3
+        id: cache-wireshark
+        with:
+          path: epan-sys/wireshark
+          key: ${{ runner.os }}-wireshark-source-${{ steps.get-wireshark-hash.outputs.hash }}
+
+      - name: Cache libwireshark.so
+        uses: actions/cache@v3
+        id: cache-libwireshark
+        with:
+          path: |
+            /usr/local/lib/libwireshark.so*
+            /usr/local/lib/libwiretap.so*
+            /usr/local/lib/libwsutil.so*
+            /usr/local/lib/pkgconfig/wireshark.pc
+          key: ${{ runner.os }}-wireshark-dylib-${{ steps.get-wireshark-hash.outputs.hash }}
+
+      - name: Checkout wireshark
+        if: steps.cache-wireshark.outputs.cache-hit != 'true'
+        run: git submodule update --init --recursive ./epan-sys/wireshark
+
+      - name: Set up wireshark dependencies
+        run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
+
+      - name: Install ninja
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
+        run: sudo apt-get install -y ninja-build
+
+      - name: Build and install wireshark
+        if: steps.cache-libwireshark.outputs.cache-hit != 'true'
+        run: |
+          cd ./epan-sys/wireshark && \
+          mkdir -p build && \
+          cd build && \
+          cmake -G Ninja \
+            -DBUILD_androiddump=OFF \
+            -DBUILD_capinfos=OFF \
+            -DBUILD_captype=OFF \
+            -DBUILD_ciscodump=OFF \
+            -DBUILD_corbaidl2wrs=OFF \
+            -DBUILD_dcerpcidl2wrs=OFF \
+            -DBUILD_dftest=OFF \
+            -DBUILD_dpauxmon=OFF \
+            -DBUILD_dumpcap=OFF \
+            -DBUILD_editcap=OFF \
+            -DBUILD_etwdump=OFF \
+            -DBUILD_logray=OFF \
+            -DBUILD_mergecap=OFF \
+            -DBUILD_randpkt=OFF \
+            -DBUILD_randpktdump=OFF \
+            -DBUILD_rawshark=OFF \
+            -DBUILD_reordercap=OFF \
+            -DBUILD_sshdump=OFF \
+            -DBUILD_text2pcap=OFF \
+            -DBUILD_tfshark=OFF \
+            -DBUILD_tshark=OFF \
+            -DBUILD_wifidump=OFF \
+            -DBUILD_wireshark=OFF \
+            -DBUILD_xxx2deb=OFF \
+            .. && \
+          ninja libwireshark.so && \
+          sudo ninja install
+
+      - name: Check libwireshark.so
+        run: |
+          ls /usr/local/lib | grep libwireshark.so* && \
+          pkg-config --libs wireshark
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --check
+
+      - name: Run clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --no-deps -- -Dwarnings
+
+      - name: Build everything
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --all-targets
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib
+        with:
+          command: test
