@@ -20,6 +20,43 @@ jobs:
       - name: Set up wireshark
         run: sudo bash ./epan-sys/wireshark/tools/debian-setup.sh
 
+      - name: Install ninja
+        run: sudo apt-get install -y ninja-build
+
+      - name: Build and install wireshark
+        run: |
+          cd ./epan-sys/wireshark && \
+          mkdir -p build && \
+          cd build && \
+          cmake -G ninja \
+            -DBUILD_androiddump=OFF \
+            -DBUILD_capinfos=OFF \
+            -DBUILD_captype=OFF \
+            -DBUILD_ciscodump=OFF \
+            -DBUILD_corbaidl2wrs=OFF \
+            -DBUILD_dcerpcidl2wrs=OFF \
+            -DBUILD_dftest=OFF \
+            -DBUILD_dpauxmon=OFF \
+            -DBUILD_dumpcap=OFF \
+            -DBUILD_editcap=OFF \
+            -DBUILD_etwdump=OFF \
+            -DBUILD_logray=OFF \
+            -DBUILD_mergecap=OFF \
+            -DBUILD_randpkt=OFF \
+            -DBUILD_randpktdump=OFF \
+            -DBUILD_rawshark=OFF \
+            -DBUILD_reordercap=OFF \
+            -DBUILD_sshdump=OFF \
+            -DBUILD_text2pcap=OFF \
+            -DBUILD_tfshark=OFF \
+            -DBUILD_tshark=OFF \
+            -DBUILD_wifidump=OFF \
+            -DBUILD_wireshark=OFF \
+            -DBUILD_xxx2deb=OFF \
+            .. && \
+          ninja &&
+          make install
+
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
