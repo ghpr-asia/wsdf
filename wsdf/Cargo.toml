@@ -4,12 +4,12 @@ version = "0.1.1"
 edition = "2021"
 autotests = false
 license = "MIT OR Apache-2.0"
-description = "Wireshark Dissector Framework"
+description = "Proc-macro based Wireshark Dissector Framework"
 homepage = "https://github.com/ghpr-asia/wsdf"
 documentation = "https://docs.rs/wsdf"
 repository = "https://github.com/ghpr-asia/wsdf"
 readme = "README.md"
-keywords = ["wireshark", "dissectors"]
+keywords = ["wireshark", "dissector"]
 categories = ["network-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
