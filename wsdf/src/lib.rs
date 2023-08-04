@@ -1,5 +1,6 @@
-//! **wsdf** is a proc-macro based framework to generate Wireshark dissectors from your Rust data
-//! types. Using wsdf, you can write dissectors in a declarative way, all from within Rust.
+//! **wsdf** (**W**ire**s**hark **D**issector **F**ramework) is a proc-macro based framework to
+//! generate Wireshark dissectors from your Rust data types. Using wsdf, you can write dissectors
+//! in a declarative way, all from within Rust.
 //!
 //! Examples can be found in the
 //! [GitHub repo](https://github.com/ghpr-asia/wsdf/tree/main/wsdf/examples/).
@@ -46,11 +47,12 @@
 //!
 //! * The **`wsdf::version!` macro** specifies the plugin version as 0.0.1, built for Wireshark
 //! version 4.0.X. This information is required by Wireshark when loading the plugin.
-//! * The protocol itself should **derive `wsdf::Protocol`**. Since this is UDP, we also register
-//! ourselves to the `"ip.proto"` dissector table, and set up the `"udp.port"` dissector table for
-//! subdissectors to use. More details about these annotations can be found in the sections below.
+//! * The protocol itself should **derive `wsdf::Protocol`**. Since this is UDP, the dissector is
+//! registered to the `"ip.proto"` dissector table, and also sets up the `"udp.port"` dissector
+//! table for subdissectors to use. More details about these annotations can be found in the
+//! sections below.
 //!
-//! We must also specify the crate type in `Cargo.toml`.
+//! The crate type must be specified in `Cargo.toml`.
 //!
 //! ```toml
 //! # Cargo.toml
@@ -58,11 +60,11 @@
 //! crate-type = ["cdylib"]
 //! ```
 //!
-//! After running `cargo build`, our dissector plugin should appear in the `target/debug/` folder
-//! as a shared library object (`.so` on Linux, `.dylib` on macOS, and `.dll` on Windows). We can
-//! then copy this file to Wireshark's [plugin
-//! folder](https://www.wireshark.org/docs/wsug_html_chunked/ChPluginFolders.html) so that
-//! Wireshark or tshark will load it upon startup. On Linux, this is at
+//! After running `cargo build`, the dissector plugin should appear in the `target/debug/` folder
+//! as a shared library object (`.so` on Linux, `.dylib` on macOS, and `.dll` on Windows). Copying
+//! this file to Wireshark's [plugin
+//! folder](https://www.wireshark.org/docs/wsug_html_chunked/ChPluginFolders.html) will allow
+//! Wireshark or tshark to load it upon startup. On Linux, this is at
 //! `~/.local/lib/wireshark/plugins/4.0/epan/`.
 //!
 //! # Types
@@ -167,8 +169,8 @@
 //! }
 //! ```
 //!
-//! This generates a new enum named `DataDispatch` which implements `Into<usize>`. We can just
-//! directly return that from the `dispatch_typ` function.
+//! This generates a new enum named `DataDispatch` which implements `Into<usize>`, which can be
+//! directly returned from the `dispatch_typ` function.
 //!
 //! ## Lists
 //!
@@ -233,7 +235,7 @@
 //! ```
 //!
 //! In this example, wsdf will invoke `log_ts`, `check_loopback`, and `slow_down`, in that order,
-//! when we encounter the field. Each function passed to the `tap` attribute must return `()`.
+//! when it encounters the field. Each function passed to the `tap` attribute must return `()`.
 //!
 //! ## Using `Fields`
 //!
@@ -266,11 +268,11 @@
 //! }
 //!
 //! fn peek(Fields(fields): Fields) {
-//!     // `nanos` is an Option<&u64>, but we did not save it, so it should be `None`
+//!     // `nanos` is an Option<&u64>, but it is not saved, so it should be `None`
 //!     let nanos = fields.get_u64("market_by_price.nanos");
 //!     assert_eq!(nanos, None);
 //!
-//!     // `num_updates` is an Option<&u8>, and since we saved it, it should be a `Some`
+//!     // `num_updates` is an Option<&u8>, and it is saved, it should be a `Some`
 //!     let num_updates = fields.get_u8("market_by_price.num_updates");
 //!     assert!(matches!(num_updates, Some(_)));
 //!
@@ -382,9 +384,10 @@
 //! }
 //! ```
 //!
-//! Here, we set up the `"udp.port"` dissector table, and try to find a subdissector registered to
-//! the table, for the value of the source port. If that fails, we try again with the destination
-//! port. And if that fails, Wireshark's default data dissector is invoked.
+//! Here, the `"udp.port"` dissector table is set up. To decode the payload, wsdf will first try to
+//! find a subdissector registered to the `"udp.port"` table interested in the value of the source
+//! port. If no subdissector is found, wsdf tries again with the destination port. And if that
+//! fails, Wireshark's default data dissector is invoked.
 //!
 //! # Attributes
 //!
