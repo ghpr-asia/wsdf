@@ -2,9 +2,9 @@
 [![crates.io](https://img.shields.io/crates/v/wsdf.svg)](https://crates.io/crates/wsdf)
 [![CI](https://github.com/ghpr-asia/wsdf/actions/workflows/ci.yml/badge.svg)](https://github.com/ghpr-asia/wsdf/actions/workflows/ci.yml)
 
-**wsdf** is a proc-macro based framework to generate Wireshark dissectors from
-your Rust data types. Using wsdf, you can write dissectors in a declarative
-way, all from within Rust.
+**wsdf** (**W**ire**s**hark **D**issector **F**ramework) is a proc-macro based
+framework to generate Wireshark dissectors from your Rust data types. Using
+wsdf, you can write dissectors in a declarative way, all from within Rust.
 
 Here is what a dissector for UDP looks like:
 
@@ -25,7 +25,7 @@ Check out the [docs](https://docs.rs/wsdf) for more information. Some
 [examples](wsdf/examples/) are also available, including a simple dissector for
 DNS, showcased below.
 
-![DNS dissector showcase](docs/dns_dissector.gif)
+![DNS dissector showcase](https://raw.githubusercontent.com/ghpr-asia/wsdf/main/docs/dns_dissector.gif)
 
 wsdf has been tested on Linux against Wireshark 4.0.
 
