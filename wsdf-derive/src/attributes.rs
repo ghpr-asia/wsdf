@@ -70,6 +70,7 @@ pub(crate) struct FieldOptions {
     /// Custom name for the field.
     pub(crate) rename: Option<String>,
     pub(crate) save: Option<bool>,
+    pub(crate) bytes: Option<bool>,
 }
 
 /// Options for an enum variant.
@@ -242,6 +243,7 @@ impl OptionBuilder for FieldOptions {
                 Some(ident) => match ident.to_string().as_str() {
                     META_HIDE => self.hidden = Some(true),
                     META_SAVE => self.save = Some(true),
+                    META_BYTES => self.bytes = Some(true),
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
             },
@@ -287,6 +289,10 @@ impl OptionBuilder for FieldOptions {
                     META_RENAME => {
                         let rename = get_lit_str(&nv.value)?.value();
                         self.rename = Some(rename);
+                    }
+                    META_BYTES => {
+                        let bytes = get_lit_bool(&nv.value)?.value;
+                        self.bytes = Some(bytes);
                     }
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
@@ -395,6 +401,7 @@ const META_SUBDISSECTOR: &str = "subdissector";
 const META_RENAME: &str = "rename";
 const META_PRE_DISSECT: &str = "pre_dissect";
 const META_POST_DISSECT: &str = "post_dissect";
+const META_BYTES: &str = "bytes";
 
 /// Extracts all the meta items from a list of attributes.
 pub(crate) fn get_meta_items(attrs: &[&syn::Attribute]) -> syn::Result<Vec<syn::Meta>> {
