@@ -1069,7 +1069,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
 }
 
-pub trait Primitive<'tvb, T: ?Sized>: Dissect<'tvb, T> {
+pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
     /// Adds the field to the protocol tree using a custom string. Must return the new packet
     /// offset.
     fn add_to_tree_format_value(
@@ -1080,6 +1080,46 @@ pub trait Primitive<'tvb, T: ?Sized>: Dissect<'tvb, T> {
 
     /// Saves the field into the fields store.
     fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>);
+}
+
+impl<'tvb, MaybeBytes: ?Sized, T> Dissect<'tvb, MaybeBytes> for (T,)
+where
+    T: Dissect<'tvb, MaybeBytes>,
+{
+    type Emit = <T as Dissect<'tvb, MaybeBytes>>::Emit;
+
+    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, MaybeBytes>>::register(args, hf_indices, etts);
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit {
+        <T as Dissect<'tvb, MaybeBytes>>::emit(args)
+    }
+}
+
+impl<'tvb, MaybeBytes: ?Sized, T> Primitive<'tvb, MaybeBytes> for (T,)
+where
+    T: Primitive<'tvb, MaybeBytes>,
+{
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        <T as Primitive<'tvb, MaybeBytes>>::add_to_tree_format_value(args, s, nr_bytes)
+    }
+
+    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
+        <T as Primitive<'tvb, MaybeBytes>>::save(args, store);
+    }
 }
 
 /// Adds a single field to the protocol tree. Internally, this uses the most basic
