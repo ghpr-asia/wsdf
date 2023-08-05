@@ -1049,7 +1049,7 @@ impl DissectorArgs<'_, '_> {
     }
 }
 
-trait Dissect<'tvb, MaybeBytes: ?Sized> {
+pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     /// We would like to query the value of some fields, e.g. `u8`. If the type supports this
     /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.
     type Emit;
@@ -1069,7 +1069,7 @@ trait Dissect<'tvb, MaybeBytes: ?Sized> {
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
 }
 
-trait Primitive<'tvb, T: ?Sized>: Dissect<'tvb, T> {
+pub trait Primitive<'tvb, T: ?Sized>: Dissect<'tvb, T> {
     /// Adds the field to the protocol tree using a custom string. Must return the new packet
     /// offset.
     fn add_to_tree_format_value(
