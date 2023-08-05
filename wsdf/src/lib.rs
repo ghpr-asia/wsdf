@@ -527,7 +527,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void, CString};
 
 pub use epan_sys;
 pub use wsdf_derive::{version, Dispatch, Protocol, ProtocolField};
@@ -837,9 +837,13 @@ pub mod tap {
     }
 
     #[doc(hidden)]
-    pub fn handle_consume_with<'a, Args, Ret, H>(ctx: &Context<'a, ()>, handler: H) -> (usize, Ret)
+    pub fn handle_consume_with<'a, T, Args, Ret, H>(
+        ctx: &Context<'a, T>,
+        handler: H,
+    ) -> (usize, Ret)
     where
-        H: Handler<'a, (), Args, (usize, Ret)>,
+        T: Clone,
+        H: Handler<'a, T, Args, (usize, Ret)>,
         Ret: std::fmt::Display,
     {
         handler.call(ctx)
@@ -968,5 +972,786 @@ mod compile_tests {
         t.pass("tests/should_pass/*.rs");
 
         t.compile_fail("tests/should_fail/*.rs");
+    }
+}
+
+/// Collection of data which may be needed when dissecting a type.
+///
+/// Let's keep this type trivially copy-able.
+#[derive(Clone, Copy)]
+pub struct DissectorArgs<'a, 'tvb> {
+    /// The previously registered header field indices. Keyed by wireshark's filter strings.
+    pub hf_indices: &'tvb HashMap<String, c_int>,
+
+    /// The previously registered ett indices. Keyed by wireshark's filter strings.
+    pub etts: &'tvb HashMap<String, c_int>,
+
+    pub tvb: *mut epan_sys::tvbuff,
+    pub pinfo: *mut epan_sys::packet_info,
+    pub proto_root: *mut epan_sys::proto_tree,
+
+    /// A slice of the entire packet.
+    pub data: &'tvb [u8],
+
+    /// Wireshark filter string for the next expected field.
+    pub prefix: &'a str,
+
+    /// Offset at which the next field is expected.
+    pub offset: usize,
+
+    /// Parent node under which the next field should be added.
+    pub parent: *mut epan_sys::proto_tree,
+
+    /// A dispatch index, iff the field is an enum.
+    pub dispatch: Option<usize>,
+
+    /// The length of the field, iff the field is a list with length determined at runtime.
+    pub list_len: Option<usize>,
+
+    /// Encoding for the field, if any.
+    pub ws_enc: Option<u32>,
+
+    /// Text meant for the root of subtrees.
+    pub subtree_label: Option<*const c_char>,
+}
+
+/// Data required when registering fields.
+#[derive(Clone, Copy)]
+pub struct RegisterArgs<'a> {
+    /// The protocol ID.
+    pub proto_id: c_int,
+
+    /// Name for the field.
+    pub name: *const c_char,
+
+    /// Wireshark filter string for the field.
+    pub prefix: &'a str,
+
+    /// Description for the field. Would be a null pointer if there is no description.
+    pub blurb: *const c_char,
+
+    /// Custom picked wireshark type, if any.
+    pub ws_type: Option<c_uint>,
+
+    /// Custom picked wireshark display, if any.
+    pub ws_display: Option<c_int>,
+}
+
+impl DissectorArgs<'_, '_> {
+    /// Retrieves the hf index registered for the current prefix, if any.
+    pub fn get_hf_index(&self) -> Option<c_int> {
+        self.hf_indices.get(self.prefix).cloned()
+    }
+
+    /// Retrieves the ett index registered for the current prefix, if any.
+    pub fn get_ett_index(&self) -> Option<c_int> {
+        self.etts.get(self.prefix).cloned()
+    }
+}
+
+trait Dissect<'tvb, MaybeBytes: ?Sized> {
+    /// We would like to query the value of some fields, e.g. `u8`. If the type supports this
+    /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.
+    type Emit;
+
+    /// Adds the field to the protocol tree. Must return the new packet offset.
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
+
+    /// Adds the field to the protocol tree using a custom string. Must return the new packet
+    /// offset.
+    ///
+    /// This does not make sense for some types. In which case, just leave the body as
+    /// `unimplemented!()`. It would violate our own assumptions if it is ever called.
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize;
+
+    /// Returns the value associated with the field, if any.
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
+
+    /// Registers the field. It is the responsibility of the implementor to save the hf index
+    /// and possibly the ett index into the two maps.
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    );
+}
+
+/// Adds a single field to the protocol tree. Internally, this uses the most basic
+/// `proto_tree_add_item` function.
+fn add_to_tree_single_field(args: &DissectorArgs, size: usize, default_enc: u32) -> usize {
+    let offset = args.offset;
+
+    let hf_index = args.get_hf_index().unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_item(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            args.ws_enc.unwrap_or(default_enc),
+        );
+    }
+
+    offset + size
+}
+
+/// Adds a uint type (u8, u16, etc.) to the protocol tree with a custom string.
+fn add_to_tree_format_value_uint(
+    args: &DissectorArgs,
+    size: usize,
+    value: c_uint,
+    s: &impl std::fmt::Display,
+) -> usize {
+    let offset = args.offset;
+
+    let hf_index = args.get_hf_index().unwrap();
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_uint_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            value,
+            fmt.as_ptr(),
+        );
+    }
+
+    offset + size
+}
+
+/// Adds an int type (i8, i16, etc.) to the protocol tree with a custom string.
+fn add_to_tree_format_value_int(
+    args: &DissectorArgs,
+    size: usize,
+    value: c_int,
+    s: &impl std::fmt::Display,
+) -> usize {
+    let offset = args.offset;
+
+    let hf_index = args.get_hf_index().unwrap();
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_int_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            value,
+            fmt.as_ptr(),
+        );
+    }
+
+    offset + size
+}
+
+/// Registers a hf index.
+fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: c_uint) -> c_int {
+    let hf_index_ptr = Box::leak(Box::new(-1)) as *mut _;
+    let abbrev = CString::new(args.prefix).unwrap();
+    let type_ = args.ws_type.unwrap_or(default_type);
+    let display = args.ws_display.unwrap_or(default_display);
+
+    let hf_register_info = epan_sys::hf_register_info {
+        p_id: hf_index_ptr,
+        hfinfo: epan_sys::header_field_info {
+            name: args.name,
+            abbrev: abbrev.as_ptr(),
+            type_,
+            display,
+            strings: std::ptr::null(),
+            bitmask: 0,
+            blurb: args.blurb,
+            id: -1,
+            parent: 0,
+            ref_type: epan_sys::hf_ref_type_HF_REF_TYPE_NONE,
+            same_name_prev_id: -1,
+            same_name_next: std::ptr::null_mut(),
+        },
+    };
+    let hfs = Box::leak(Box::new([hf_register_info])) as *mut _;
+
+    unsafe {
+        epan_sys::proto_register_field_array(args.proto_id, hfs, 1);
+    }
+    debug_assert_ne!(unsafe { *hf_index_ptr }, -1);
+    unsafe { *hf_index_ptr }
+}
+
+const DEFAULT_INT_ENCODING: u32 = epan_sys::BIG_ENDIAN;
+const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
+
+impl Dissect<'_, ()> for u8 {
+    type Emit = u8;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 1);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 1, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> u8 {
+        unsafe { epan_sys::tvb_get_guint8(args.tvb, args.offset as _) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for u16 {
+    type Emit = u16;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 2);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 2, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> u16 {
+        unsafe { epan_sys::tvb_get_ntohs(args.tvb, args.offset as _) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT16;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for u32 {
+    type Emit = u32;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 4);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 4, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> u32 {
+        unsafe { epan_sys::tvb_get_ntohl(args.tvb, args.offset as _) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for u64 {
+    type Emit = u64;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 8);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 8, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> u64 {
+        unsafe { epan_sys::tvb_get_ntoh64(args.tvb, args.offset as _) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT64;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for i8 {
+    type Emit = i8;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 1);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 1, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> i8 {
+        unsafe { epan_sys::tvb_get_gint8(args.tvb, args.offset as _) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for i16 {
+    type Emit = i16;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 2);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 2, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> i16 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint16(args.tvb, args.offset as _, enc) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT16;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for i32 {
+    type Emit = i32;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 4);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 4, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> i32 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint32(args.tvb, args.offset as _, enc) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl Dissect<'_, ()> for i64 {
+    type Emit = i64;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, 8);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 8, value, s)
+    }
+
+    fn emit(args: &DissectorArgs) -> i64 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint64(args.tvb, args.offset as _, enc) }
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT64;
+
+        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+fn add_to_tree_format_value_bytes(
+    args: &DissectorArgs,
+    nr_bytes: usize,
+    s: &impl std::fmt::Display,
+) -> usize {
+    let offset = args.offset;
+
+    let hf_index = args.get_hf_index().unwrap();
+    let value = &args.data[args.offset..args.offset + nr_bytes];
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+
+    unsafe {
+        epan_sys::proto_tree_add_bytes_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            offset as _,
+            nr_bytes as _,
+            value.as_ptr(),
+            fmt.as_ptr(),
+        );
+    }
+
+    offset + nr_bytes
+}
+
+impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, _fields: &mut FieldsStore<'tvb>) -> usize {
+        // There should be no ws_enc passed to the function, since this method is specifically
+        // meant to dissect bytes, which always have ENC_NA.
+        debug_assert!(args.ws_enc.is_none());
+
+        add_to_tree_single_field(args, N, epan_sys::ENC_NA)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, N);
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s)
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        &args.data[args.offset..args.offset + N]
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        _etts: &mut HashMap<String, c_int>,
+    ) {
+        const DEFAULT_DISPLAY: c_int =
+            (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_BYTES;
+
+        // This entire impl block is dedicated to FT_BYTES types. So we would not expect a custom
+        // type to be passed into here.
+        debug_assert!(args.ws_type.is_none());
+
+        let hf_index = register_hf_index(&args, DEFAULT_DISPLAY, DEFAULT_TYPE);
+        hf_indices.insert(args.prefix.to_owned(), hf_index);
+    }
+}
+
+impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, _fields: &mut FieldsStore<'tvb>) -> usize {
+        debug_assert!(args.list_len.is_some());
+        debug_assert!(args.ws_enc.is_none());
+
+        add_to_tree_single_field(args, args.list_len.unwrap(), epan_sys::ENC_NA)
+    }
+
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, args.list_len.unwrap());
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s)
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        &args.data[args.offset..args.offset + args.list_len.unwrap()]
+    }
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        // [u8; _] and Vec<u8> are the same when it comes to registration.
+        <[u8; 0] as Dissect<'tvb, [u8]>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T> Dissect<'tvb, ()> for Vec<T>
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut offset = args.offset;
+        for _ in 0..args.list_len.unwrap() {
+            offset = <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
+        }
+        offset
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs<'_, 'tvb>) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, ()>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T> Dissect<'tvb, [u8]> for Vec<T>
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut offset = args.offset;
+        for _ in 0..args.list_len.unwrap() {
+            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+        }
+        offset
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs<'_, 'tvb>) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, [u8]>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T, const N: usize> Dissect<'tvb, ()> for [T; N]
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut offset = args.offset;
+        for _ in 0..N {
+            offset = <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
+        }
+        offset
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs<'_, 'tvb>) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, ()>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T, const N: usize> Dissect<'tvb, [u8]> for [T; N]
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut offset = args.offset;
+        for _ in 0..N {
+            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+        }
+        offset
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs<'_, 'tvb>) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, [u8]>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T> Dissect<'tvb, ()> for &[T]
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        // For dissection purposes, a Vec<T> is identical to a &[T]
+        <Vec<T> as Dissect<'tvb, ()>>::add_to_tree(args, fields)
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, ()>>::register(args, hf_indices, etts);
+    }
+}
+
+impl<'tvb, T> Dissect<'tvb, [u8]> for &[T]
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<T> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
+    }
+
+    fn add_to_tree_format_value(
+        _args: &DissectorArgs<'_, 'tvb>,
+        _s: &impl std::fmt::Display,
+        _nr_bytes: usize,
+    ) -> usize {
+        unimplemented!()
+    }
+
+    fn emit(_args: &DissectorArgs) {}
+
+    fn register(
+        args: RegisterArgs,
+        hf_indices: &mut HashMap<String, c_int>,
+        etts: &mut HashMap<String, c_int>,
+    ) {
+        <T as Dissect<'tvb, [u8]>>::register(args, hf_indices, etts);
     }
 }
