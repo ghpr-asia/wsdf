@@ -407,7 +407,7 @@ fn derive_dissect_impl_struct(
                     todo!()
                 }
                 fn register(
-                    args: wsdf::RegisterArgs,
+                    args: &wsdf::RegisterArgs,
                     hf_indices: &mut wsdf::HfIndices,
                     etts: &mut wsdf::EttIndices,
                 ) {
@@ -426,7 +426,7 @@ fn derive_dissect_impl_struct(
                     todo!()
                 }
                 fn register(
-                    args: wsdf::RegisterArgs,
+                    args: &wsdf::RegisterArgs,
                     hf_indices: &mut wsdf::HfIndices,
                     etts: &mut wsdf::EttIndices,
                 ) {

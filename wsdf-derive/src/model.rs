@@ -980,7 +980,7 @@ impl FieldMeta {
         let field_ty = &self.ty;
         let maybe_bytes = self.maybe_bytes();
         parse_quote! {
-            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(args_next, hf_indices, etts);
+            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, hf_indices, etts);
         }
     }
 
