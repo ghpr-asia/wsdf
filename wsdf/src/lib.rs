@@ -1292,7 +1292,7 @@ impl Dissect<'_, ()> for u8 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1333,7 +1333,7 @@ impl Dissect<'_, ()> for u16 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT16;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1374,7 +1374,7 @@ impl Dissect<'_, ()> for u32 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1415,7 +1415,7 @@ impl Dissect<'_, ()> for u64 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT64;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1456,7 +1456,7 @@ impl Dissect<'_, ()> for i8 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1497,7 +1497,7 @@ impl Dissect<'_, ()> for i16 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT16;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1538,7 +1538,7 @@ impl Dissect<'_, ()> for i32 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1580,7 +1580,7 @@ impl Dissect<'_, ()> for i64 {
     fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT64;
 
-        let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
@@ -1658,7 +1658,7 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         // type to be passed into here.
         debug_assert!(args.ws_type.is_none());
 
-        let hf_index = register_hf_index(&args, DEFAULT_DISPLAY, DEFAULT_TYPE);
+        let hf_index = register_hf_index(args, DEFAULT_DISPLAY, DEFAULT_TYPE);
         hf_indices.insert(args.prefix, hf_index);
     }
 
