@@ -379,7 +379,11 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
         syn::Data::Struct(data) => {
             let dissect_options = init_options::<ProtocolFieldOptions>(&input.attrs).unwrap();
             let struct_info = StructInnards::from_fields(&data.fields)?;
-            derive_dissect_impl_struct(&input.ident, &dissect_options, &struct_info)
+            Ok(derive_dissect_impl_struct(
+                &input.ident,
+                &dissect_options,
+                &struct_info,
+            ))
         }
         syn::Data::Enum(_) => todo!(),
         syn::Data::Union(data) => make_err(
@@ -391,64 +395,22 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
 
 fn derive_dissect_impl_struct(
     ident: &syn::Ident,
-    _dissect_options: &ProtocolFieldOptions,
+    dissect_options: &ProtocolFieldOptions,
     struct_info: &StructInnards,
-) -> syn::Result<syn::ItemImpl> {
-    let register_fields = struct_info.register_fields();
-    let dissect_fields = struct_info.dissect_fields();
+) -> syn::ItemImpl {
+    let fn_add_to_tree = struct_info.add_to_tree_fn(dissect_options);
+    let fn_register = struct_info.register_fn();
+    let maybe_bytes = struct_info.maybe_bytes();
 
-    match struct_info {
-        StructInnards::UnitTuple(unit) => {
-            let maybe_bytes = unit.0.maybe_bytes();
-            let build_args_next = unit.decl_dissector_args();
-
-            Ok(parse_quote! {
-                impl<'tvb> wsdf::Dissect<'tvb, #maybe_bytes> for #ident {
-                    type Emit = ();
-                    fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                        #build_args_next
-                        if args.hidden {
-                            return args.offset + <#ident as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
-                        }
-                        let offset = args.offset;
-                        #(#dissect_fields)*
-                        offset
-                    }
-                    fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                        todo!()
-                    }
-                    fn register(
-                        args: &wsdf::RegisterArgs,
-                        hf_indices: &mut wsdf::HfIndices,
-                        etts: &mut wsdf::EttIndices,
-                    ) {
-                        #(#register_fields)*
-                    }
-                    fn emit(args: &wsdf::DissectorArgs) {}
-                }
-            })
-        }
-        StructInnards::NamedFields { .. } => Ok(parse_quote! {
-            impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
-                type Emit = ();
-                fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                    todo!()
-                }
-                fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                    todo!()
-                }
-                fn register(
-                    args: &wsdf::RegisterArgs,
-                    hf_indices: &mut wsdf::HfIndices,
-                    etts: &mut wsdf::EttIndices,
-                ) {
-                    let _ = etts.get_or_create_ett(&args);
-                    let _ = hf_indices.get_or_create_text_node(&args);
-
-                    #(#register_fields)*
-                }
-                fn emit(args: &wsdf::DissectorArgs) {}
+    parse_quote! {
+        impl<'tvb> wsdf::Dissect<'tvb, #maybe_bytes> for #ident {
+            type Emit = ();
+            #fn_add_to_tree
+            fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                todo!()
             }
-        }),
+            #fn_register
+            fn emit(_args: &wsdf::DissectorArgs) {}
+        }
     }
 }

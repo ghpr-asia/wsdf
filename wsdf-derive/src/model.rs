@@ -916,7 +916,7 @@ impl StructInnards {
         })))
     }
 
-    pub(crate) fn register_fields(&self) -> Vec<syn::Stmt> {
+    fn register_fields(&self) -> Vec<syn::Stmt> {
         match self {
             StructInnards::UnitTuple(unit) => {
                 let decl_args = unit.decl_register_args();
@@ -933,28 +933,83 @@ impl StructInnards {
         }
     }
 
-    pub(crate) fn dissect_fields(&self) -> Vec<syn::Stmt> {
+    fn dissect_fields(&self) -> Vec<syn::Stmt> {
         match self {
             StructInnards::UnitTuple(unit) => {
-                let plan = FieldDissectionPlan::from_field_meta(&unit.0);
+                let plan = FieldDissectionPlan::from_unit_tuple(unit);
+                let decl_args_next = unit.decl_dissector_args();
                 let var_name = format_ident!("__inner_value");
+                plan.dissection_steps(&decl_args_next, &var_name)
+            }
+            StructInnards::NamedFields { fields } => {
+                let plans = get_field_dissection_plans(fields);
+                fields
+                    .iter()
+                    .zip(plans)
+                    .flat_map(|(field, plan)| -> Vec<syn::Stmt> {
+                        let decl_prefix_next = field.decl_prefix_next();
+                        let decl_args_next = field.decl_dissector_args();
+                        let var_name = format_ident!("__{}", field.ident);
 
-                let emit_and_assign = plan.emit_and_assign(&var_name);
-                let build_tap_ctx = plan.build_tap_ctx(&var_name);
-                let call_taps = plan.call_taps();
-                let exec_add_strategy = plan.exec_add_strategy();
+                        let steps = plan.dissection_steps(&decl_args_next, &var_name);
 
-                // We don't build the `args_next` variable (as we assume it already exists) for
-                // unit tuples.
+                        parse_quote! {
+                            #decl_prefix_next
+                            #(#steps)*
+                        }
+                    })
+                    .collect()
+            }
+        }
+    }
 
+    pub(crate) fn maybe_bytes(&self) -> syn::Type {
+        match self {
+            StructInnards::UnitTuple(unit) => unit.0.maybe_bytes(),
+            StructInnards::NamedFields { .. } => parse_quote! { () },
+        }
+    }
+
+    pub(crate) fn add_to_tree_fn(&self, _dissect_options: &ProtocolFieldOptions) -> syn::ItemFn {
+        let dissect_fields = self.dissect_fields();
+        let fn_contents: Vec<syn::Stmt> = match self {
+            StructInnards::UnitTuple(_) => parse_quote! {
+                let offset = args.offset;
+                #(#dissect_fields)*
+                offset
+            },
+            StructInnards::NamedFields { .. } => {
+                let add_subtree = add_subtree_steps();
                 parse_quote! {
-                    #emit_and_assign
-                    #build_tap_ctx
-                    #(#call_taps)*
-                    #(#exec_add_strategy)*
+                    let offset = args.offset;
+                    #(#add_subtree)*
+                    #(#dissect_fields)*
+                    offset
                 }
             }
-            StructInnards::NamedFields { .. } => todo!(),
+        };
+        parse_quote! {
+            fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore) -> usize {
+                #(#fn_contents)*
+            }
+        }
+    }
+
+    pub(crate) fn register_fn(&self) -> syn::ItemFn {
+        let register_fields = self.register_fields();
+        let fn_contents: Vec<syn::Stmt> = match self {
+            StructInnards::UnitTuple(_) => register_fields,
+            StructInnards::NamedFields { .. } => parse_quote! {
+                let _ = etts.get_or_create_ett(args);
+                let _ = hf_indices.get_or_create_text_node(args);
+
+                #(#register_fields)*
+            },
+        };
+        parse_quote! {
+            fn register(args: &wsdf::RegisterArgs, hf_indices: &mut wsdf::HfIndices, etts: &mut wsdf::EttIndices) {
+                #(#fn_contents)*
+            }
         }
     }
 }
@@ -971,7 +1026,6 @@ impl UnitTuple {
 
     pub(crate) fn decl_dissector_args(&self) -> syn::Stmt {
         let ws_enc = self.0.ws_enc_as_expr();
-        let hidden = self.0.options.hidden.unwrap_or(false);
         parse_quote! {
             let args_next = wsdf::DissectorArgs {
                 hf_indices: args.hf_indices,
@@ -987,7 +1041,6 @@ impl UnitTuple {
                 dispatch: None,
                 list_len: None,
                 ws_enc: #ws_enc,
-                hidden: #hidden,
             };
         }
     }
@@ -1019,6 +1072,36 @@ impl NamedField {
             #call_register_func
         }
     }
+
+    fn decl_prefix_next(&self) -> syn::Stmt {
+        let field_name = self.ident.to_string();
+        parse_quote! {
+            let prefix_next = args.prefix.to_owned() + "." + #field_name;
+        }
+    }
+
+    fn decl_dissector_args(&self) -> syn::Stmt {
+        let dispatch = self.meta.dispatch_as_expr();
+        let list_len = self.meta.size_hint_as_expr();
+        let ws_enc = self.meta.ws_enc_as_expr();
+        parse_quote! {
+            let args_next = wsdf::DissectorArgs {
+                hf_indices: args.hf_indices,
+                etts: args.etts,
+                tvb: args.tvb,
+                pinfo: args.pinfo,
+                proto_root: args.proto_root,
+                data: args.data,
+
+                prefix: &prefix_next,
+                offset,
+                parent,
+                dispatch: #dispatch,
+                list_len: #list_len,
+                ws_enc: #ws_enc,
+            };
+        }
+    }
 }
 
 impl FieldMeta {
@@ -1041,7 +1124,15 @@ impl FieldMeta {
         self.options.ws_enc_as_expr()
     }
 
-    pub(crate) fn maybe_bytes(&self) -> syn::Type {
+    fn dispatch_as_expr(&self) -> syn::Expr {
+        self.options.dispatch_as_expr()
+    }
+
+    fn size_hint_as_expr(&self) -> syn::Expr {
+        self.options.size_hint_as_expr()
+    }
+
+    fn maybe_bytes(&self) -> syn::Type {
         self.options.maybe_bytes()
     }
 
@@ -1098,6 +1189,26 @@ impl FieldOptions {
         }
     }
 
+    fn dispatch_as_expr(&self) -> syn::Expr {
+        match &self.dispatch {
+            Some(dispatch) => {
+                let field_name = format_ident!("__{dispatch}");
+                parse_quote! { std::option::Option::Some(#field_name) }
+            }
+            None => parse_quote! { std::option::Option::None },
+        }
+    }
+
+    fn size_hint_as_expr(&self) -> syn::Expr {
+        match &self.size_hint {
+            Some(size_hint) => {
+                let field_name = format_ident!("__{size_hint}");
+                parse_quote! { std::option::Option::Some(#field_name as usize) }
+            }
+            None => parse_quote! { std::option::Option::None },
+        }
+    }
+
     pub(crate) fn maybe_bytes(&self) -> syn::Type {
         match self.bytes {
             Some(true) => parse_quote! { [u8] },
@@ -1112,13 +1223,13 @@ pub(crate) struct FieldDissectionPlan<'a> {
     taps: &'a [syn::Path],
     add_strategy: AddStrategy,
 
-    ty: &'a syn::Type,
-    maybe_bytes: syn::Type,
+    meta: &'a FieldMeta,
 }
 
 enum AddStrategy {
     Subdissect(Subdissector),
     ConsumeWith(syn::Path),
+    Hidden,
     Default,
 }
 
@@ -1133,6 +1244,8 @@ impl AddStrategy {
             AddStrategy::Subdissect(subd.clone())
         } else if let Some(consume_fn) = &options.consume_with {
             AddStrategy::ConsumeWith(consume_fn.clone())
+        } else if let Some(true) = options.hidden {
+            AddStrategy::Hidden
         } else {
             AddStrategy::Default
         }
@@ -1140,8 +1253,8 @@ impl AddStrategy {
 }
 
 impl<'a> FieldDissectionPlan<'a> {
-    fn from_field_meta(meta: &'a FieldMeta) -> Self {
-        let options = &meta.options;
+    fn from_unit_tuple(unit: &'a UnitTuple) -> Self {
+        let options = &unit.0.options;
         let emit = !options.taps.is_empty() || options.consume_with.is_some();
         let build_ctx = emit;
         let add_strategy = AddStrategy::from_field_options(options);
@@ -1151,21 +1264,41 @@ impl<'a> FieldDissectionPlan<'a> {
             build_ctx,
             taps: &options.taps,
             add_strategy,
-            ty: &meta.ty,
-            maybe_bytes: meta.maybe_bytes(),
+            meta: &unit.0,
         }
     }
 }
 
 impl FieldDissectionPlan<'_> {
+    fn dissection_steps(
+        &self,
+        decl_args_next: impl quote::ToTokens,
+        field_var_name: &syn::Ident,
+    ) -> Vec<syn::Stmt> {
+        let emit_and_assign = self.emit_and_assign(field_var_name);
+        let build_tap_ctx = self.build_tap_ctx(field_var_name);
+        let call_taps = self.call_taps();
+        let exec_add_strategy = self.exec_add_strategy();
+
+        // @todo: account for #[wsdf(save)]
+        parse_quote! {
+            #decl_args_next
+            #emit_and_assign
+            #build_tap_ctx
+            #(#call_taps)*
+            #(#exec_add_strategy)*
+        }
+    }
+
     fn emit_and_assign(&self, var_name: &syn::Ident) -> Option<syn::Stmt> {
         if !self.emit {
             return None;
         }
-        let ty = &self.ty;
-        let maybe_bytes = &self.maybe_bytes;
+        let ty = &self.meta.ty;
+        let maybe_bytes = self.meta.maybe_bytes();
         Some(parse_quote! {
-            let #var_name = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::emit(args);
+            let #var_name = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::emit(&args_next);
+
         })
     }
 
@@ -1196,8 +1329,8 @@ impl FieldDissectionPlan<'_> {
     }
 
     fn exec_add_strategy(&self) -> Vec<syn::Stmt> {
-        let ty = &self.ty;
-        let maybe_bytes = &self.maybe_bytes;
+        let ty = &self.meta.ty;
+        let maybe_bytes = self.meta.maybe_bytes();
         match &self.add_strategy {
             AddStrategy::Subdissect(_) => todo!(),
             AddStrategy::ConsumeWith(consume_fn) => {
@@ -1212,6 +1345,9 @@ impl FieldDissectionPlan<'_> {
                     #call_add_to_tree
                 }
             }
+            AddStrategy::Hidden => vec![parse_quote! {
+                let offset = offset + <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
+            }],
             AddStrategy::Default => vec![parse_quote! {
                 let offset = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::add_to_tree(&args_next, fields);
             }],
@@ -1219,7 +1355,7 @@ impl FieldDissectionPlan<'_> {
     }
 }
 
-fn _get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan> {
+fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan> {
     let mut fields_to_emit = HashSet::new();
     for field in fields {
         let options = &field.meta.options;
@@ -1252,9 +1388,28 @@ fn _get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan
                 build_ctx,
                 taps: &options.taps,
                 add_strategy,
-                ty: &field.meta.ty,
-                maybe_bytes: field.meta.maybe_bytes(),
+                meta: &field.meta,
             }
         })
         .collect()
+}
+
+fn add_subtree_steps() -> Vec<syn::Stmt> {
+    parse_quote! {
+        let subtree_hf_index = args.get_hf_index().unwrap();
+        let parent = unsafe {
+            wsdf::epan_sys::proto_tree_add_item(
+                args.parent,
+                subtree_hf_index,
+                args.tvb,
+                args.offset as _,
+                -1,
+                wsdf::epan_sys::ENC_NA,
+            )
+        };
+        unsafe {
+            wsdf::epan_sys::proto_registrar_get_name(subtree_hf_index);
+            wsdf::epan_sys::proto_item_add_subtree(parent, args.get_ett_index().unwrap());
+        }
+    }
 }
