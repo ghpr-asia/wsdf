@@ -66,7 +66,8 @@ pub(crate) struct FieldOptions {
     /// and let it figure out the size.
     ///
     /// This is necessary for certain protocols, e.g. those which use TLV encoding.
-    pub(crate) consume_bytes: Option<ConsumeBytes>,
+    pub(crate) consume_with: Option<syn::Path>,
+    pub(crate) subdissector: Option<Subdissector>,
     /// Custom name for the field.
     pub(crate) rename: Option<String>,
     pub(crate) save: Option<bool>,
@@ -283,7 +284,7 @@ impl OptionBuilder for FieldOptions {
                     META_CONSUME_WITH => {
                         let consume_with = get_lit_str(&nv.value)?.value();
                         let path = syn::parse_str::<syn::Path>(&consume_with)?;
-                        self.consume_bytes = Some(ConsumeBytes::ConsumeWith(path));
+                        self.consume_with = Some(path);
                     }
                     META_SUBDISSECTOR => self.extract_subdissector(nv, meta)?,
                     META_RENAME => {
@@ -340,9 +341,7 @@ impl FieldOptions {
             [] => return make_err(meta, "expected at least one item"),
             [decode_as] => {
                 let decode_as = get_lit_str(decode_as)?.value();
-                self.consume_bytes = Some(ConsumeBytes::Subdissector(Subdissector::DecodeAs(
-                    decode_as,
-                )));
+                self.subdissector = Some(Subdissector::DecodeAs(decode_as));
             }
             [table_name, items @ ..] => {
                 let table_name = get_lit_str(table_name)?.value();
@@ -353,11 +352,11 @@ impl FieldOptions {
                     fields.push(format_ident!("{}", field));
                 }
 
-                self.consume_bytes = Some(ConsumeBytes::Subdissector(Subdissector::Table {
+                self.subdissector = Some(Subdissector::Table {
                     table_name,
                     fields,
                     typ: SubdissectorTableType::Unknown,
-                }));
+                });
             }
         }
         Ok(())
