@@ -403,6 +403,9 @@ fn derive_dissect_impl_struct(
                 fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
                     todo!()
                 }
+                fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                    todo!()
+                }
                 fn register(
                     args: wsdf::RegisterArgs,
                     hf_indices: &mut wsdf::HfIndices,
@@ -417,6 +420,9 @@ fn derive_dissect_impl_struct(
             impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
                 type Emit = ();
                 fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                    todo!()
+                }
+                fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
                     todo!()
                 }
                 fn register(

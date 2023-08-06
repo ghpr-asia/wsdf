@@ -1000,6 +1000,9 @@ pub struct DissectorArgs<'a, 'tvb> {
 
     /// Text meant for the root of subtrees.
     pub subtree_label: Option<*const c_char>,
+
+    /// Whether the field is to be hidden.
+    pub hidden: bool,
 }
 
 /// Data required when registering fields.
@@ -1106,6 +1109,9 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     /// Adds the field to the protocol tree. Must return the new packet offset.
     fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize;
 
+    /// Returns the number of bytes this field occupies in the packet.    
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize;
+
     /// Registers the field. It is the responsibility of the implementor to save the hf index
     /// and possibly the ett index into the two maps.
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices);
@@ -1135,6 +1141,10 @@ where
 
     fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
         <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        <T as Dissect<'tvb, MaybeBytes>>::size(args, fields)
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
@@ -1278,6 +1288,10 @@ impl Dissect<'_, ()> for u8 {
         add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
     }
 
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        1
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
 
@@ -1313,6 +1327,10 @@ impl Dissect<'_, ()> for u16 {
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
         add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        2
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
@@ -1352,6 +1370,10 @@ impl Dissect<'_, ()> for u32 {
         add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
     }
 
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        4
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
 
@@ -1387,6 +1409,10 @@ impl Dissect<'_, ()> for u64 {
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
         add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        8
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
@@ -1426,6 +1452,10 @@ impl Dissect<'_, ()> for i8 {
         add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
     }
 
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        1
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
 
@@ -1461,6 +1491,10 @@ impl Dissect<'_, ()> for i16 {
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
         add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        2
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
@@ -1500,6 +1534,10 @@ impl Dissect<'_, ()> for i32 {
         add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
     }
 
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        4
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
 
@@ -1536,6 +1574,10 @@ impl Dissect<'_, ()> for i64 {
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
         add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        8
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
@@ -1606,6 +1648,10 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         add_to_tree_single_field(args, N, epan_sys::ENC_NA)
     }
 
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        N
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_DISPLAY: c_int =
             (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
@@ -1651,12 +1697,18 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
         add_to_tree_single_field(args, args.list_len.unwrap(), epan_sys::ENC_NA)
     }
 
+    fn size(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        // @todo: clarify this length thing
+        args.list_len.unwrap_or(args.data.len() - args.offset)
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         // [u8; _] and Vec<u8> are the same when it comes to registration.
         <[u8; 0] as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
 
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        // @todo: clarify this length thing
         let len = args.list_len.unwrap_or(args.data.len() - args.offset);
         &args.data[args.offset..args.offset + len]
     }
@@ -1693,6 +1745,14 @@ where
         offset
     }
 
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        let mut size = 0;
+        for _ in 0..args.list_len.unwrap() {
+            size += <T as Dissect<()>>::size(args, fields);
+        }
+        size
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
@@ -1712,6 +1772,14 @@ where
             offset = <T as Dissect<[u8]>>::add_to_tree(args, fields);
         }
         offset
+    }
+
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        let mut size = 0;
+        for _ in 0..args.list_len.unwrap() {
+            size += <T as Dissect<[u8]>>::size(args, fields);
+        }
+        size
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
@@ -1735,6 +1803,14 @@ where
         offset
     }
 
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<()>>::size(args, fields);
+        }
+        size
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
@@ -1756,6 +1832,14 @@ where
         offset
     }
 
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<[u8]>>::size(args, fields);
+        }
+        size
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
@@ -1774,6 +1858,10 @@ where
         <Vec<T> as Dissect<()>>::add_to_tree(args, fields)
     }
 
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        <Vec<T> as Dissect<()>>::size(args, fields)
+    }
+
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
@@ -1789,6 +1877,10 @@ where
 
     fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
         <Vec<T> as Dissect<[u8]>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        <Vec<T> as Dissect<[u8]>>::size(args, fields)
     }
 
     fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
