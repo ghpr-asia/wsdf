@@ -981,10 +981,10 @@ mod compile_tests {
 #[derive(Clone, Copy)]
 pub struct DissectorArgs<'a, 'tvb> {
     /// The previously registered header field indices. Keyed by wireshark's filter strings.
-    pub hf_indices: &'tvb HashMap<String, c_int>,
+    pub hf_indices: &'tvb HfIndices,
 
     /// The previously registered ett indices. Keyed by wireshark's filter strings.
-    pub etts: &'tvb HashMap<String, c_int>,
+    pub etts: &'tvb EttIndices,
 
     pub tvb: *mut epan_sys::tvbuff,
     pub pinfo: *mut epan_sys::packet_info,
@@ -1044,8 +1044,8 @@ pub struct HfIndices(HashMap<String, c_int>);
 pub struct EttIndices(HashMap<String, c_int>);
 
 impl HfIndices {
-    /// Creates a hf index for the current prefix. If an index for the prefix already exists,
-    /// simply returns it.
+    /// Creates a hf index for the current prefix as a text node. Intended for subtree roots with
+    /// no associated type. If an index for the prefix already exists, simply returns it.
     pub fn get_or_create_text_node(&mut self, args: &RegisterArgs) -> c_int {
         if self.0.contains_key(args.prefix) {
             return self.0[args.prefix];
@@ -1067,6 +1067,14 @@ impl HfIndices {
         self.0.insert(args.prefix.to_string(), idx);
         idx
     }
+
+    pub fn get(&self, prefix: &str) -> Option<c_int> {
+        self.0.get(prefix).copied()
+    }
+
+    fn insert(&mut self, prefix: &str, idx: c_int) -> Option<c_int> {
+        self.0.insert(prefix.to_string(), idx)
+    }
 }
 
 impl EttIndices {
@@ -1085,17 +1093,21 @@ impl EttIndices {
         self.0.insert(args.prefix.to_string(), ett_index);
         ett_index
     }
+
+    pub fn get(&self, prefix: &str) -> Option<c_int> {
+        self.0.get(prefix).copied()
+    }
 }
 
 impl DissectorArgs<'_, '_> {
     /// Retrieves the hf index registered for the current prefix, if any.
     pub fn get_hf_index(&self) -> Option<c_int> {
-        self.hf_indices.get(self.prefix).cloned()
+        self.hf_indices.get(self.prefix)
     }
 
     /// Retrieves the ett index registered for the current prefix, if any.
     pub fn get_ett_index(&self) -> Option<c_int> {
-        self.etts.get(self.prefix).cloned()
+        self.etts.get(self.prefix)
     }
 }
 
@@ -1109,11 +1121,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
 
     /// Registers the field. It is the responsibility of the implementor to save the hf index
     /// and possibly the ett index into the two maps.
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    );
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices);
 
     /// Returns the value associated with the field, if any.
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
@@ -1142,11 +1150,7 @@ where
         <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<'tvb, MaybeBytes>>::register(args, hf_indices, etts);
     }
 
@@ -1287,15 +1291,11 @@ impl Dissect<'_, ()> for u8 {
         add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u8 {
@@ -1328,15 +1328,11 @@ impl Dissect<'_, ()> for u16 {
         add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT16;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u16 {
@@ -1369,15 +1365,11 @@ impl Dissect<'_, ()> for u32 {
         add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u32 {
@@ -1410,15 +1402,11 @@ impl Dissect<'_, ()> for u64 {
         add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT64;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u64 {
@@ -1451,15 +1439,11 @@ impl Dissect<'_, ()> for i8 {
         add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i8 {
@@ -1492,15 +1476,11 @@ impl Dissect<'_, ()> for i16 {
         add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT16;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i16 {
@@ -1533,15 +1513,11 @@ impl Dissect<'_, ()> for i32 {
         add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i32 {
@@ -1575,15 +1551,11 @@ impl Dissect<'_, ()> for i64 {
         add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT64;
 
         let hf_index = register_hf_index(&args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i64 {
@@ -1647,11 +1619,7 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         add_to_tree_single_field(args, N, epan_sys::ENC_NA)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        _etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
         const DEFAULT_DISPLAY: c_int =
             (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_BYTES;
@@ -1661,7 +1629,7 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         debug_assert!(args.ws_type.is_none());
 
         let hf_index = register_hf_index(&args, DEFAULT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix.to_owned(), hf_index);
+        hf_indices.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
@@ -1696,11 +1664,7 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
         add_to_tree_single_field(args, args.list_len.unwrap(), epan_sys::ENC_NA)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         // [u8; _] and Vec<u8> are the same when it comes to registration.
         <[u8; 0] as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
@@ -1742,11 +1706,7 @@ where
         offset
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
 
@@ -1767,11 +1727,7 @@ where
         offset
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
 
@@ -1792,11 +1748,7 @@ where
         offset
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
 
@@ -1817,11 +1769,7 @@ where
         offset
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
 
@@ -1839,11 +1787,7 @@ where
         <Vec<T> as Dissect<()>>::add_to_tree(args, fields)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<()>>::register(args, hf_indices, etts);
     }
 
@@ -1860,11 +1804,7 @@ where
         <Vec<T> as Dissect<[u8]>>::add_to_tree(args, fields)
     }
 
-    fn register(
-        args: RegisterArgs,
-        hf_indices: &mut HashMap<String, c_int>,
-        etts: &mut HashMap<String, c_int>,
-    ) {
+    fn register(args: RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
         <T as Dissect<[u8]>>::register(args, hf_indices, etts);
     }
 
