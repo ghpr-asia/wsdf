@@ -1104,7 +1104,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     type Emit;
 
     /// Adds the field to the protocol tree. Must return the new packet offset.
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize;
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize;
 
     /// Returns the number of bytes this field occupies in the packet.    
     fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize;
@@ -1136,7 +1136,7 @@ where
 {
     type Emit = <T as Dissect<'tvb, MaybeBytes>>::Emit;
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
     }
 
@@ -1728,13 +1728,13 @@ impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
     }
 }
 
-impl<'tvb, T> Dissect<'_, ()> for Vec<T>
+impl<'tvb, T> Dissect<'tvb, ()> for Vec<T>
 where
     T: Dissect<'tvb, ()>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         let mut offset = args.offset;
         for _ in 0..args.list_len.unwrap() {
             offset = <T as Dissect<()>>::add_to_tree(args, fields);
@@ -1757,16 +1757,16 @@ where
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
 }
 
-impl<'tvb, T> Dissect<'_, [u8]> for Vec<T>
+impl<'tvb, T> Dissect<'tvb, [u8]> for Vec<T>
 where
     T: Dissect<'tvb, [u8]>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         let mut offset = args.offset;
         for _ in 0..args.list_len.unwrap() {
-            offset = <T as Dissect<[u8]>>::add_to_tree(args, fields);
+            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
         }
         offset
     }
@@ -1786,16 +1786,16 @@ where
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
 }
 
-impl<'tvb, T, const N: usize> Dissect<'_, ()> for [T; N]
+impl<'tvb, T, const N: usize> Dissect<'tvb, ()> for [T; N]
 where
     T: Dissect<'tvb, ()>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         let mut offset = args.offset;
         for _ in 0..N {
-            offset = <T as Dissect<()>>::add_to_tree(args, fields);
+            offset = <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
         }
         offset
     }
@@ -1815,16 +1815,16 @@ where
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
 }
 
-impl<'tvb, T, const N: usize> Dissect<'_, [u8]> for [T; N]
+impl<'tvb, T, const N: usize> Dissect<'tvb, [u8]> for [T; N]
 where
     T: Dissect<'tvb, [u8]>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         let mut offset = args.offset;
         for _ in 0..N {
-            offset = <T as Dissect<[u8]>>::add_to_tree(args, fields);
+            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
         }
         offset
     }
@@ -1844,15 +1844,15 @@ where
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
 }
 
-impl<'tvb, T> Dissect<'_, ()> for &[T]
+impl<'tvb, T> Dissect<'tvb, ()> for &[T]
 where
     T: Dissect<'tvb, ()>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
         // For dissection purposes, a Vec<T> is identical to a &[T]
-        <Vec<T> as Dissect<()>>::add_to_tree(args, fields)
+        <Vec<T> as Dissect<'tvb, ()>>::add_to_tree(args, fields)
     }
 
     fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
@@ -1866,14 +1866,14 @@ where
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
 }
 
-impl<'tvb, T> Dissect<'_, [u8]> for &[T]
+impl<'tvb, T> Dissect<'tvb, [u8]> for &[T]
 where
     T: Dissect<'tvb, [u8]>,
 {
     type Emit = ();
 
-    fn add_to_tree(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
-        <Vec<T> as Dissect<[u8]>>::add_to_tree(args, fields)
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
+        <Vec<T> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
     }
 
     fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
