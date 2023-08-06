@@ -1037,6 +1037,56 @@ pub struct RegisterArgs<'a> {
     pub ws_display: Option<c_int>,
 }
 
+#[derive(Default)]
+pub struct HfIndices(HashMap<String, c_int>);
+
+#[derive(Default)]
+pub struct EttIndices(HashMap<String, c_int>);
+
+impl HfIndices {
+    /// Creates a hf index for the current prefix. If an index for the prefix already exists,
+    /// simply returns it.
+    pub fn get_or_create_text_node(&mut self, args: &RegisterArgs) -> c_int {
+        if self.0.contains_key(args.prefix) {
+            return self.0[args.prefix];
+        }
+
+        // Since this is a text node, the display type should be BASE_NONE, and the wireshark type
+        // should be FT_NONE, if either of them happen to be set.
+        debug_assert!(
+            args.ws_display == None
+                || args.ws_display == Some(epan_sys::field_display_e_BASE_NONE as _)
+        );
+        debug_assert!(args.ws_type == None || args.ws_type == Some(epan_sys::ftenum_FT_NONE));
+
+        let idx = register_hf_index(
+            args,
+            epan_sys::field_display_e_BASE_NONE as _,
+            epan_sys::ftenum_FT_NONE,
+        );
+        self.0.insert(args.prefix.to_string(), idx);
+        idx
+    }
+}
+
+impl EttIndices {
+    /// Creates an ett index for the current prefix. If an index for the prefix already exists,
+    /// simply returns it.
+    pub fn get_or_create_ett(&mut self, args: &RegisterArgs) -> c_int {
+        if self.0.contains_key(args.prefix) {
+            return self.0[args.prefix];
+        }
+        let ett_index_ptr = Box::leak(Box::new(-1)) as *mut _;
+        unsafe {
+            epan_sys::proto_register_subtree_array([ett_index_ptr].as_mut_ptr(), 1);
+        }
+        let ett_index = unsafe { *ett_index_ptr };
+        debug_assert_ne!(ett_index, -1);
+        self.0.insert(args.prefix.to_string(), ett_index);
+        ett_index
+    }
+}
+
 impl DissectorArgs<'_, '_> {
     /// Retrieves the hf index registered for the current prefix, if any.
     pub fn get_hf_index(&self) -> Option<c_int> {
@@ -1819,4 +1869,118 @@ where
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+#[cfg(test)]
+mod test_with_dummy_proto {
+    use super::*;
+    use std::sync::Once;
+
+    macro_rules! cstr {
+        ($x:expr) => {
+            concat!($x, '\0').as_ptr() as *const std::ffi::c_char
+        };
+    }
+
+    static INIT_DUMMY_PROTOCOL: Once = Once::new();
+    static mut DUMMY_PROTOCOL_ID: c_int = -1;
+
+    /// Registers a dummy protocol with wireshark.
+    fn init_proto() {
+        INIT_DUMMY_PROTOCOL.call_once(|| unsafe {
+            DUMMY_PROTOCOL_ID = epan_sys::proto_register_protocol(
+                cstr!("Dummy Protocol"),
+                cstr!("Dummy Protocol"),
+                cstr!("dummy_proto"),
+            );
+            assert_ne!(DUMMY_PROTOCOL_ID, -1);
+        });
+    }
+
+    fn get_dummy_proto_reg_args() -> RegisterArgs<'static> {
+        RegisterArgs {
+            proto_id: unsafe { DUMMY_PROTOCOL_ID },
+            name: cstr!("Dummy Protocol"),
+            prefix: "dummy_proto",
+            blurb: std::ptr::null(),
+            ws_type: None,
+            ws_display: None,
+        }
+    }
+
+    #[test]
+    fn can_insert_hf() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+        let idx = hf_indices.get_or_create_text_node(&args);
+
+        assert_ne!(idx, -1);
+    }
+
+    #[test]
+    fn can_insert_ett() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+        let idx = ett_indices.get_or_create_ett(&args);
+
+        assert_ne!(idx, -1);
+    }
+
+    #[test]
+    fn can_insert_multiple_hfs() {
+        init_proto();
+        let mut args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+        let idx1 = hf_indices.get_or_create_text_node(&args);
+        args.prefix = "dummy_proto2";
+        let idx2 = hf_indices.get_or_create_text_node(&args);
+
+        assert_ne!(idx1, -1);
+        assert_ne!(idx2, -1);
+        assert_ne!(idx1, idx2);
+    }
+
+    #[test]
+    fn can_insert_multiple_etts() {
+        init_proto();
+        let mut args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+        let idx1 = ett_indices.get_or_create_ett(&args);
+        args.prefix = "dummy_proto2";
+        let idx2 = ett_indices.get_or_create_ett(&args);
+
+        assert_ne!(idx1, -1);
+        assert_ne!(idx2, -1);
+        assert_ne!(idx1, idx2);
+    }
+
+    #[test]
+    fn hf_indices_are_idempotent() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+
+        let idx1 = hf_indices.get_or_create_text_node(&args);
+        let idx2 = hf_indices.get_or_create_text_node(&args);
+        assert_eq!(idx1, idx2);
+    }
+
+    #[test]
+    fn ett_indices_are_idempotent() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+
+        let idx1 = ett_indices.get_or_create_ett(&args);
+        let idx2 = ett_indices.get_or_create_ett(&args);
+        assert_eq!(idx1, idx2);
+    }
 }
