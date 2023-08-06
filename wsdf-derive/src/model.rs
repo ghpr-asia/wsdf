@@ -979,10 +979,9 @@ impl StructInnards {
                 offset
             },
             StructInnards::NamedFields { .. } => {
-                let add_subtree = add_subtree_steps();
                 parse_quote! {
                     let offset = args.offset;
-                    #(#add_subtree)*
+                    let parent = args.add_subtree();
                     #(#dissect_fields)*
                     offset
                 }
@@ -1394,24 +1393,4 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
             }
         })
         .collect()
-}
-
-fn add_subtree_steps() -> Vec<syn::Stmt> {
-    parse_quote! {
-        let subtree_hf_index = args.get_hf_index().unwrap();
-        let parent = unsafe {
-            wsdf::epan_sys::proto_tree_add_item(
-                args.parent,
-                subtree_hf_index,
-                args.tvb,
-                args.offset as _,
-                -1,
-                wsdf::epan_sys::ENC_NA,
-            )
-        };
-        unsafe {
-            wsdf::epan_sys::proto_registrar_get_name(subtree_hf_index);
-            wsdf::epan_sys::proto_item_add_subtree(parent, args.get_ett_index().unwrap());
-        }
-    }
 }

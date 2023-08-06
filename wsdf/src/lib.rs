@@ -1098,6 +1098,24 @@ impl DissectorArgs<'_, '_> {
     pub fn get_ett_index(&self) -> Option<c_int> {
         self.etts.get(self.prefix)
     }
+    pub fn add_subtree(&self) -> *mut epan_sys::proto_item {
+        let subtree_hf_index = self.get_hf_index().unwrap();
+        let parent = unsafe {
+            epan_sys::proto_tree_add_item(
+                self.parent,
+                subtree_hf_index,
+                self.tvb,
+                self.offset as _,
+                -1,
+                epan_sys::ENC_NA,
+            )
+        };
+        unsafe {
+            epan_sys::proto_registrar_get_name(subtree_hf_index);
+            epan_sys::proto_item_add_subtree(parent, self.get_ett_index().unwrap());
+        }
+        parent
+    }
 }
 
 pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
