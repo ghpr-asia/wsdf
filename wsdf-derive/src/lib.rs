@@ -12,7 +12,7 @@ mod types;
 mod util;
 
 use crate::attributes::*;
-use crate::model::{DataRoot, FieldMeta, StructInnards};
+use crate::model::{DataRoot, StructInnards};
 use crate::util::*;
 
 #[derive(Debug)]
@@ -395,27 +395,39 @@ fn derive_dissect_impl_struct(
     struct_info: &StructInnards,
 ) -> syn::Result<syn::ItemImpl> {
     let register_fields = struct_info.register_fields();
+    let dissect_fields = struct_info.dissect_fields();
 
     match struct_info {
-        StructInnards::UnitTuple(FieldMeta { .. }) => Ok(parse_quote! {
-            impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
-                type Emit = ();
-                fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                    todo!()
+        StructInnards::UnitTuple(unit) => {
+            let maybe_bytes = unit.0.maybe_bytes();
+            let build_args_next = unit.decl_dissector_args();
+
+            Ok(parse_quote! {
+                impl<'tvb> wsdf::Dissect<'tvb, #maybe_bytes> for #ident {
+                    type Emit = ();
+                    fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                        #build_args_next
+                        if args.hidden {
+                            return args.offset + <#ident as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
+                        }
+                        let offset = args.offset;
+                        #(#dissect_fields)*
+                        offset
+                    }
+                    fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                        todo!()
+                    }
+                    fn register(
+                        args: &wsdf::RegisterArgs,
+                        hf_indices: &mut wsdf::HfIndices,
+                        etts: &mut wsdf::EttIndices,
+                    ) {
+                        #(#register_fields)*
+                    }
+                    fn emit(args: &wsdf::DissectorArgs) {}
                 }
-                fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                    todo!()
-                }
-                fn register(
-                    args: &wsdf::RegisterArgs,
-                    hf_indices: &mut wsdf::HfIndices,
-                    etts: &mut wsdf::EttIndices,
-                ) {
-                    #(#register_fields)*
-                }
-                fn emit(args: &wsdf::DissectorArgs) {}
-            }
-        }),
+            })
+        }
         StructInnards::NamedFields { .. } => Ok(parse_quote! {
             impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
                 type Emit = ();
