@@ -1848,6 +1848,19 @@ mod test_with_dummy_proto {
         }
     }
 
+    /// Checks the a hf index is not -1, and that when queried, it returns a non-null pointer to a
+    /// header_field_info struct.
+    macro_rules! assert_hf_ok {
+		($idx:expr $(,)?) => {
+			assert_ne!($idx, -1);
+			assert_ne!(unsafe { epan_sys::proto_registrar_get_nth($idx as _) }, std::ptr::null_mut());
+		};
+		($idx:expr, $($idxs:expr),+ $(,)?) => {
+			assert_hf_ok!($idx);
+			assert_hf_ok!($($idxs),+);
+		}
+	}
+
     #[test]
     fn can_insert_hf() {
         init_proto();
@@ -1856,7 +1869,7 @@ mod test_with_dummy_proto {
         let mut hf_indices = HfIndices::default();
         let idx = hf_indices.get_or_create_text_node(&args);
 
-        assert_ne!(idx, -1);
+        assert_hf_ok!(idx);
     }
 
     #[test]
@@ -1880,9 +1893,8 @@ mod test_with_dummy_proto {
         args.prefix = "dummy_proto2";
         let idx2 = hf_indices.get_or_create_text_node(&args);
 
-        assert_ne!(idx1, -1);
-        assert_ne!(idx2, -1);
         assert_ne!(idx1, idx2);
+        assert_hf_ok!(idx1, idx2);
     }
 
     #[test]
@@ -1895,9 +1907,8 @@ mod test_with_dummy_proto {
         args.prefix = "dummy_proto2";
         let idx2 = ett_indices.get_or_create_ett(&args);
 
-        assert_ne!(idx1, -1);
-        assert_ne!(idx2, -1);
         assert_ne!(idx1, idx2);
+        assert_hf_ok!(idx1, idx2);
     }
 
     #[test]
@@ -1909,7 +1920,9 @@ mod test_with_dummy_proto {
 
         let idx1 = hf_indices.get_or_create_text_node(&args);
         let idx2 = hf_indices.get_or_create_text_node(&args);
+
         assert_eq!(idx1, idx2);
+        assert_hf_ok!(idx1);
     }
 
     #[test]
@@ -1921,6 +1934,7 @@ mod test_with_dummy_proto {
 
         let idx1 = ett_indices.get_or_create_ett(&args);
         let idx2 = ett_indices.get_or_create_ett(&args);
+
         assert_eq!(idx1, idx2);
     }
 }
