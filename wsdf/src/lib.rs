@@ -962,19 +962,6 @@ impl<'a> FieldsStore<'a> {
     }
 }
 
-#[cfg(test)]
-mod compile_tests {
-    #[test]
-    fn run_all() {
-        let t = trybuild::TestCases::new();
-
-        t.pass("tests/simple/*.rs");
-        t.pass("tests/should_pass/*.rs");
-
-        t.compile_fail("tests/should_fail/*.rs");
-    }
-}
-
 /// Collection of data which may be needed when dissecting a type.
 ///
 /// Let's keep this type trivially copy-able.
@@ -1936,5 +1923,18 @@ mod test_with_dummy_proto {
         let idx2 = ett_indices.get_or_create_ett(&args);
 
         assert_eq!(idx1, idx2);
+    }
+}
+
+#[cfg(test)]
+mod compile_tests {
+    #[test]
+    fn run_all() {
+        let t = trybuild::TestCases::new();
+
+        t.pass("tests/simple/*.rs");
+        t.pass("tests/should_pass/*.rs");
+
+        t.compile_fail("tests/should_fail/*.rs");
     }
 }
