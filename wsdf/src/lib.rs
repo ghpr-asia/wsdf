@@ -973,6 +973,8 @@ pub struct DissectorArgs<'a, 'tvb> {
     /// The previously registered ett indices. Keyed by wireshark's filter strings.
     pub etts: &'tvb EttIndices,
 
+    pub dissector_tables: &'tvb DissectorTables,
+
     pub tvb: *mut epan_sys::tvbuff,
     pub pinfo: *mut epan_sys::packet_info,
     pub proto_root: *mut epan_sys::proto_tree,
@@ -1026,6 +1028,9 @@ pub struct HfIndices(HashMap<String, c_int>);
 
 #[derive(Default)]
 pub struct EttIndices(HashMap<String, c_int>);
+
+#[derive(Default)]
+pub struct DissectorTables(HashMap<&'static str, c_int>);
 
 impl HfIndices {
     /// Creates a hf index for the current prefix as a text node. Intended for subtree roots with
@@ -1125,6 +1130,10 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
 
     /// Saves the field into the fields store.
     fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>);
+}
+
+pub trait Subdissect<'tvb> {
+    fn subdissect(args: &DissectorArgs) -> usize;
 }
 
 impl<'tvb, MaybeBytes: ?Sized, T> Dissect<'tvb, MaybeBytes> for (T,)
