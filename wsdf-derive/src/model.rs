@@ -999,14 +999,14 @@ impl StructInnards {
         let fn_contents: Vec<syn::Stmt> = match self {
             StructInnards::UnitTuple(_) => register_fields,
             StructInnards::NamedFields { .. } => parse_quote! {
-                let _ = etts.get_or_create_ett(args);
-                let _ = hf_indices.get_or_create_text_node(args);
+                let _ = ws_indices.ett.get_or_create_ett(args);
+                let _ = ws_indices.hf.get_or_create_text_node(args);
 
                 #(#register_fields)*
             },
         };
         parse_quote! {
-            fn register(args: &wsdf::RegisterArgs, hf_indices: &mut wsdf::HfIndices, etts: &mut wsdf::EttIndices) {
+            fn register(args: &wsdf::RegisterArgs, ws_indices: &mut wsdf::WsIndices) {
                 #(#fn_contents)*
             }
         }
@@ -1141,7 +1141,7 @@ impl FieldMeta {
         let field_ty = &self.ty;
         let maybe_bytes = self.maybe_bytes();
         parse_quote! {
-            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, hf_indices, etts);
+            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, ws_indices);
         }
     }
 

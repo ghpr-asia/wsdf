@@ -1088,6 +1088,12 @@ impl EttIndices {
     }
 }
 
+pub struct WsIndices<'tvb> {
+    pub hf: &'tvb mut HfIndices,
+    pub ett: &'tvb mut EttIndices,
+    pub dtable: &'tvb mut DissectorTables,
+}
+
 impl DissectorArgs<'_, '_> {
     /// Retrieves the hf index registered for the current prefix, if any.
     pub fn get_hf_index(&self) -> Option<c_int> {
@@ -1098,6 +1104,7 @@ impl DissectorArgs<'_, '_> {
     pub fn get_ett_index(&self) -> Option<c_int> {
         self.etts.get(self.prefix)
     }
+
     pub fn add_subtree(&self) -> *mut epan_sys::proto_item {
         let subtree_hf_index = self.get_hf_index().unwrap();
         let parent = unsafe {
@@ -1131,7 +1138,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
 
     /// Registers the field. It is the responsibility of the implementor to save the hf index
     /// and possibly the ett index into the two maps.
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices);
 
     /// Returns the value associated with the field, if any.
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
@@ -1150,7 +1157,7 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
     fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>);
 }
 
-pub trait Subdissect<'tvb> {
+pub trait Subdissect {
     fn subdissect(args: &DissectorArgs) -> usize;
 }
 
@@ -1168,8 +1175,8 @@ where
         <T as Dissect<'tvb, MaybeBytes>>::size(args, fields)
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<'tvb, MaybeBytes>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<'tvb, MaybeBytes>>::register(args, ws_indices);
     }
 
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit {
@@ -1313,11 +1320,11 @@ impl Dissect<'_, ()> for u8 {
         1
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u8 {
@@ -1354,11 +1361,11 @@ impl Dissect<'_, ()> for u16 {
         2
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT16;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u16 {
@@ -1395,11 +1402,11 @@ impl Dissect<'_, ()> for u32 {
         4
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u32 {
@@ -1436,11 +1443,11 @@ impl Dissect<'_, ()> for u64 {
         8
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT64;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> u64 {
@@ -1477,11 +1484,11 @@ impl Dissect<'_, ()> for i8 {
         1
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i8 {
@@ -1518,11 +1525,11 @@ impl Dissect<'_, ()> for i16 {
         2
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT16;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i16 {
@@ -1559,11 +1566,11 @@ impl Dissect<'_, ()> for i32 {
         4
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i32 {
@@ -1601,11 +1608,11 @@ impl Dissect<'_, ()> for i64 {
         8
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT64;
 
         let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs) -> i64 {
@@ -1673,7 +1680,7 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         N
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, _etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         const DEFAULT_DISPLAY: c_int =
             (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_BYTES;
@@ -1683,7 +1690,7 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         debug_assert!(args.ws_type.is_none());
 
         let hf_index = register_hf_index(args, DEFAULT_DISPLAY, DEFAULT_TYPE);
-        hf_indices.insert(args.prefix, hf_index);
+        ws_indices.hf.insert(args.prefix, hf_index);
     }
 
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
@@ -1723,9 +1730,9 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
         args.list_len.unwrap_or(args.data.len() - args.offset)
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
         // [u8; _] and Vec<u8> are the same when it comes to registration.
-        <[u8; 0] as Dissect<[u8]>>::register(args, hf_indices, etts);
+        <[u8; 0] as Dissect<[u8]>>::register(args, ws_indices);
     }
 
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
@@ -1774,8 +1781,8 @@ where
         size
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<()>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
@@ -1803,8 +1810,8 @@ where
         size
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<[u8]>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
@@ -1832,8 +1839,8 @@ where
         size
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<()>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
@@ -1861,8 +1868,8 @@ where
         size
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<[u8]>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
@@ -1883,8 +1890,8 @@ where
         <Vec<T> as Dissect<()>>::size(args, fields)
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<()>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
@@ -1904,11 +1911,29 @@ where
         <Vec<T> as Dissect<[u8]>>::size(args, fields)
     }
 
-    fn register(args: &RegisterArgs, hf_indices: &mut HfIndices, etts: &mut EttIndices) {
-        <T as Dissect<[u8]>>::register(args, hf_indices, etts);
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl Subdissect for Vec<u8> {
+    fn subdissect(args: &DissectorArgs) -> usize {
+        todo!()
+    }
+}
+
+impl<const N: usize> Subdissect for [u8; N] {
+    fn subdissect(args: &DissectorArgs) -> usize {
+        todo!()
+    }
+}
+
+impl Subdissect for &[u8] {
+    fn subdissect(args: &DissectorArgs) -> usize {
+        todo!()
+    }
 }
 
 #[cfg(test)]
