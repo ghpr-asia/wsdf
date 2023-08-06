@@ -4,6 +4,7 @@ use proc_macro::TokenStream;
 
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
+use syn::parse_quote;
 
 mod attributes;
 mod model;
@@ -11,7 +12,7 @@ mod types;
 mod util;
 
 use crate::attributes::*;
-use crate::model::DataRoot;
+use crate::model::{DataRoot, FieldMeta, NamedField, StructInnards};
 use crate::util::*;
 
 #[derive(Debug)]
@@ -362,4 +363,60 @@ pub fn derive_dispatch(input: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+#[proc_macro_derive(Dissect, attributes(wsdf))]
+pub fn derive_dissect(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    let ret = derive_dissect_impl(&input)
+        .map(|code| quote! { #code })
+        .unwrap_or_else(|e| e.to_compile_error());
+    ret.into()
+}
+
+fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
+    match &input.data {
+        syn::Data::Struct(data) => {
+            let dissect_options = init_options::<ProtocolFieldOptions>(&input.attrs).unwrap();
+            let struct_info = StructInnards::from_fields(&data.fields)?;
+            derive_dissect_impl_struct(&input.ident, &dissect_options, &struct_info)
+        }
+        syn::Data::Enum(_) => todo!(),
+        syn::Data::Union(data) => make_err(
+            &data.union_token,
+            "#[derive(Dissect)] cannot be used on unions",
+        ),
+    }
+}
+
+fn derive_dissect_impl_struct(
+    ident: &syn::Ident,
+    dissect_options: &ProtocolFieldOptions,
+    struct_info: &StructInnards,
+) -> syn::Result<syn::ItemImpl> {
+    match struct_info {
+        StructInnards::UnitTuple(FieldMeta { .. }) => todo!(),
+        StructInnards::NamedFields { fields } => {
+            let register_fields = fields.iter().map(NamedField::registration_steps).flatten();
+            Ok(parse_quote! {
+                impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
+                    type Emit = ();
+                    fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                        todo!()
+                    }
+                    fn register(
+                        args: wsdf::RegisterArgs,
+                        hf_indices: &mut wsdf::HfIndices,
+                        etts: &mut wsdf::EttIndices,
+                    ) {
+                        let _ = etts.get_or_create_ett(&args);
+                        let _ = hf_indices.get_or_create_text_node(&args);
+
+                        #(#register_fields)*
+                    }
+                    fn emit(args: &wsdf::DissectorArgs) {}
+                }
+            })
+        }
+    }
 }

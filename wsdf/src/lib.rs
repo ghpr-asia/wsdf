@@ -530,7 +530,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_uint, c_void, CString};
 
 pub use epan_sys;
-pub use wsdf_derive::{version, Dispatch, Protocol, ProtocolField};
+pub use wsdf_derive::{version, Dispatch, Dissect, Protocol, ProtocolField};
 
 /// Relevant to enum types only. Represents how the variant should be picked.
 #[doc(hidden)]
