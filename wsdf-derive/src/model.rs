@@ -913,6 +913,24 @@ impl StructInnards {
             options,
         }))
     }
+
+    pub(crate) fn register_fields(&self) -> Vec<syn::Stmt> {
+        match self {
+            StructInnards::UnitTuple(meta) => {
+                let decl_args =
+                    meta.decl_register_args(&parse_quote!(args.name), &parse_quote!(&args.prefix));
+                let call_register_func = meta.call_register_func();
+                parse_quote! {
+                    #decl_args
+                    #call_register_func
+                }
+            }
+            StructInnards::NamedFields { fields } => fields
+                .iter()
+                .flat_map(NamedField::registration_steps)
+                .collect(),
+        }
+    }
 }
 
 impl NamedField {
@@ -924,19 +942,9 @@ impl NamedField {
 
         let name = self.ident.to_wsdf_title_case();
         let name: syn::Expr = cstr!(name);
-        let blurb = self.meta.blurb();
-        let ws_type = self.meta.ws_type_as_expr();
-        let ws_display = self.meta.ws_display_as_expr();
-        let decl_args: syn::Stmt = parse_quote! {
-            let args_next = wsdf::RegisterArgs {
-                proto_id: args.proto_id,
-                name: #name,
-                prefix: &prefix_next,
-                blurb: #blurb,
-                ws_type: #ws_type,
-                ws_display: #ws_display,
-            };
-        };
+        let decl_args = self
+            .meta
+            .decl_register_args(&name, &parse_quote!(&prefix_next));
 
         let call_register_func = self.meta.call_register_func();
 
@@ -973,6 +981,22 @@ impl FieldMeta {
         let maybe_bytes = self.maybe_bytes();
         parse_quote! {
             <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(args_next, hf_indices, etts);
+        }
+    }
+
+    fn decl_register_args(&self, name: &syn::Expr, prefix: &syn::Expr) -> syn::Stmt {
+        let blurb = self.blurb();
+        let ws_type = self.ws_type_as_expr();
+        let ws_display = self.ws_display_as_expr();
+        parse_quote! {
+            let args_next = wsdf::RegisterArgs {
+                proto_id: args.proto_id,
+                name: #name,
+                prefix: #prefix,
+                blurb: #blurb,
+                ws_type: #ws_type,
+                ws_display: #ws_display,
+            };
         }
     }
 }

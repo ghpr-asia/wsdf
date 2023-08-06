@@ -394,29 +394,43 @@ fn derive_dissect_impl_struct(
     dissect_options: &ProtocolFieldOptions,
     struct_info: &StructInnards,
 ) -> syn::Result<syn::ItemImpl> {
-    match struct_info {
-        StructInnards::UnitTuple(FieldMeta { .. }) => todo!(),
-        StructInnards::NamedFields { fields } => {
-            let register_fields = fields.iter().map(NamedField::registration_steps).flatten();
-            Ok(parse_quote! {
-                impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
-                    type Emit = ();
-                    fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                        todo!()
-                    }
-                    fn register(
-                        args: wsdf::RegisterArgs,
-                        hf_indices: &mut wsdf::HfIndices,
-                        etts: &mut wsdf::EttIndices,
-                    ) {
-                        let _ = etts.get_or_create_ett(&args);
-                        let _ = hf_indices.get_or_create_text_node(&args);
+    let register_fields = struct_info.register_fields();
 
-                        #(#register_fields)*
-                    }
-                    fn emit(args: &wsdf::DissectorArgs) {}
+    match struct_info {
+        StructInnards::UnitTuple(FieldMeta { .. }) => Ok(parse_quote! {
+            impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
+                type Emit = ();
+                fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                    todo!()
                 }
-            })
-        }
+                fn register(
+                    args: wsdf::RegisterArgs,
+                    hf_indices: &mut wsdf::HfIndices,
+                    etts: &mut wsdf::EttIndices,
+                ) {
+                    #(#register_fields)*
+                }
+                fn emit(args: &wsdf::DissectorArgs) {}
+            }
+        }),
+        StructInnards::NamedFields { fields } => Ok(parse_quote! {
+            impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
+                type Emit = ();
+                fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
+                    todo!()
+                }
+                fn register(
+                    args: wsdf::RegisterArgs,
+                    hf_indices: &mut wsdf::HfIndices,
+                    etts: &mut wsdf::EttIndices,
+                ) {
+                    let _ = etts.get_or_create_ett(&args);
+                    let _ = hf_indices.get_or_create_text_node(&args);
+
+                    #(#register_fields)*
+                }
+                fn emit(args: &wsdf::DissectorArgs) {}
+            }
+        }),
     }
 }

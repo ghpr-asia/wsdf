@@ -14,4 +14,7 @@ struct UDP {
     payload: Vec<u8>,
 }
 
+#[derive(Dissect)]
+struct UnixNanos(u64);
+
 fn main() {}
