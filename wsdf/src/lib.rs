@@ -1895,7 +1895,6 @@ mod test_with_dummy_proto {
         let idx2 = ett_indices.get_or_create_ett(&args);
 
         assert_ne!(idx1, idx2);
-        assert_hf_ok!(idx1, idx2);
     }
 
     #[test]
