@@ -998,9 +998,6 @@ pub struct DissectorArgs<'a, 'tvb> {
     /// Encoding for the field, if any.
     pub ws_enc: Option<u32>,
 
-    /// Text meant for the root of subtrees.
-    pub subtree_label: Option<*const c_char>,
-
     /// Whether the field is to be hidden.
     pub hidden: bool,
 }
