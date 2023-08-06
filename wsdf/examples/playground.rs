@@ -5,7 +5,7 @@
 use wsdf::Dissect;
 
 #[derive(Dissect)]
-struct UDP {
+struct Udp {
     src_port: u16,
     dst_port: u16,
     length: u16,

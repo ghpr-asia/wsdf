@@ -12,7 +12,7 @@ mod types;
 mod util;
 
 use crate::attributes::*;
-use crate::model::{DataRoot, FieldMeta, NamedField, StructInnards};
+use crate::model::{DataRoot, FieldMeta, StructInnards};
 use crate::util::*;
 
 #[derive(Debug)]
@@ -391,7 +391,7 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
 
 fn derive_dissect_impl_struct(
     ident: &syn::Ident,
-    dissect_options: &ProtocolFieldOptions,
+    _dissect_options: &ProtocolFieldOptions,
     struct_info: &StructInnards,
 ) -> syn::Result<syn::ItemImpl> {
     let register_fields = struct_info.register_fields();
@@ -413,7 +413,7 @@ fn derive_dissect_impl_struct(
                 fn emit(args: &wsdf::DissectorArgs) {}
             }
         }),
-        StructInnards::NamedFields { fields } => Ok(parse_quote! {
+        StructInnards::NamedFields { .. } => Ok(parse_quote! {
             impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
                 type Emit = ();
                 fn add_to_tree(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {

@@ -1041,10 +1041,10 @@ impl HfIndices {
         // Since this is a text node, the display type should be BASE_NONE, and the wireshark type
         // should be FT_NONE, if either of them happen to be set.
         debug_assert!(
-            args.ws_display == None
+            args.ws_display.is_none()
                 || args.ws_display == Some(epan_sys::field_display_e_BASE_NONE as _)
         );
-        debug_assert!(args.ws_type == None || args.ws_type == Some(epan_sys::ftenum_FT_NONE));
+        debug_assert!(args.ws_type.is_none() || args.ws_type == Some(epan_sys::ftenum_FT_NONE));
 
         let idx = register_hf_index(
             args,
