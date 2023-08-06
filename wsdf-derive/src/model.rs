@@ -854,3 +854,144 @@ const WSDF_VARIANT_NAMES: IdentHelper = IdentHelper("__WSDF_VARIANT_NAMES");
 const WSDF_VARIANT_DISSECT_FNS: IdentHelper = IdentHelper("__WSDF_VARIANT_DISSECT_FNS");
 const WSDF_VARIANT_SUBTREE_LABELS: IdentHelper = IdentHelper("__WSDF_VARIANT_SUBTREE_LABELS");
 const WSDF_VARIANT_IDX: IdentHelper = IdentHelper("__wsdf_variant_idx");
+
+pub(crate) enum StructInnards {
+    UnitTuple(FieldMeta),
+    NamedFields { fields: Vec<NamedField> },
+}
+
+pub(crate) struct NamedField {
+    ident: syn::Ident,
+    meta: FieldMeta,
+}
+
+pub(crate) struct FieldMeta {
+    pub(crate) ty: syn::Type,
+    pub(crate) docs: Option<String>,
+    pub(crate) options: FieldOptions,
+}
+
+impl StructInnards {
+    pub(crate) fn from_fields(fields: &syn::Fields) -> syn::Result<Self> {
+        match fields {
+            syn::Fields::Named(fields) => Self::from_fields_named(fields),
+            syn::Fields::Unnamed(fields) => Self::from_fields_unnamed(fields),
+            syn::Fields::Unit => make_err(fields, "expected at least one field"),
+        }
+    }
+
+    fn from_fields_named(fields: &syn::FieldsNamed) -> syn::Result<Self> {
+        let mut named_fields = Vec::new();
+        for field in &fields.named {
+            let ident = field.ident.clone().unwrap(); // safe since the fields are named
+            let options = init_options::<FieldOptions>(&field.attrs)?;
+            let docs = field.attrs.iter().find_map(get_docs);
+            named_fields.push(NamedField {
+                ident,
+                meta: FieldMeta {
+                    ty: field.ty.clone(),
+                    docs,
+                    options,
+                },
+            });
+        }
+        Ok(StructInnards::NamedFields {
+            fields: named_fields,
+        })
+    }
+
+    fn from_fields_unnamed(fields: &syn::FieldsUnnamed) -> syn::Result<Self> {
+        if fields.unnamed.len() != 1 {
+            return make_err(fields, "expected only one field in tuple");
+        }
+        let field = fields.unnamed.last().unwrap(); // safe since we checked there's exactly one
+        let options = init_options::<FieldOptions>(&field.attrs)?;
+        let docs = field.attrs.iter().find_map(get_docs);
+        Ok(StructInnards::UnitTuple(FieldMeta {
+            ty: field.ty.clone(),
+            docs,
+            options,
+        }))
+    }
+}
+
+impl NamedField {
+    pub(crate) fn registration_steps(&self) -> Vec<syn::Stmt> {
+        let ident_str = self.ident.to_string();
+        let decl_prefix: syn::Stmt = parse_quote! {
+            let prefix_next = args.prefix.to_owned() + "." + #ident_str;
+        };
+
+		let name = self.ident.to_wsdf_title_case();
+        let name: syn::Expr = cstr!(name);
+        let blurb = self.meta.blurb();
+        let ws_type = self.meta.ws_type_as_expr();
+        let ws_display = self.meta.ws_display_as_expr();
+        let decl_args: syn::Stmt = parse_quote! {
+            let args_next = wsdf::RegisterArgs {
+                proto_id: args.proto_id,
+                name: #name,
+                prefix: &prefix_next,
+                blurb: #blurb,
+                ws_type: #ws_type,
+                ws_display: #ws_display,
+            };
+        };
+
+        let field_ty = &self.meta.ty;
+        let maybe_bytes = self.meta.maybe_bytes();
+        let call_register_func: syn::Stmt = parse_quote! {
+            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(args_next, hf_indices, etts);
+        };
+
+        parse_quote! {
+            #decl_prefix
+            #decl_args
+            #call_register_func
+        }
+    }
+}
+
+impl FieldMeta {
+    fn blurb(&self) -> syn::Expr {
+        match &self.docs {
+            Some(docs) => cstr!(docs),
+            None => parse_quote! { std::ptr::null() },
+        }
+    }
+
+    fn ws_type_as_expr(&self) -> syn::Expr {
+        self.options.ws_type_as_expr()
+    }
+
+    fn ws_display_as_expr(&self) -> syn::Expr {
+        self.options.ws_display_as_expr()
+    }
+
+    fn maybe_bytes(&self) -> syn::Type {
+        self.options.maybe_bytes()
+    }
+}
+
+impl FieldOptions {
+    fn ws_type_as_expr(&self) -> syn::Expr {
+        match &self.ws_type {
+            Some(ty) => parse_quote! { std::option::Option::Some(#ty) },
+            None => parse_quote! { std::option::Option::None },
+        }
+    }
+
+    fn ws_display_as_expr(&self) -> syn::Expr {
+        match &self.ws_display {
+            Some(display) => parse_quote! { std::option::Option::Some(#display) },
+            None => parse_quote! { std::option::Option::None },
+        }
+    }
+
+    pub(crate) fn maybe_bytes(&self) -> syn::Type {
+        match self.bytes {
+            Some(true) => parse_quote! { [u8] },
+            Some(false) | None => parse_quote! { () },
+        }
+    }
+}
