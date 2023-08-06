@@ -503,6 +503,12 @@ impl FieldDisplayPair {
     }
 }
 
+impl quote::ToTokens for FieldDisplayPair {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.to_expr().to_tokens(tokens)
+    }
+}
+
 #[cfg(test)]
 mod test_field_display_pair {
     use super::*;
