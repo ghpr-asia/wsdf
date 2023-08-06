@@ -940,7 +940,12 @@ impl NamedField {
             let prefix_next = args.prefix.to_owned() + "." + #ident_str;
         };
 
-        let name = self.ident.to_wsdf_title_case();
+        let name = self
+            .meta
+            .options
+            .rename
+            .clone()
+            .unwrap_or(self.ident.to_wsdf_title_case());
         let name: syn::Expr = cstr!(name);
         let decl_args = self
             .meta
