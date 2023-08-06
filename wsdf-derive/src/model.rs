@@ -922,7 +922,7 @@ impl NamedField {
             let prefix_next = args.prefix.to_owned() + "." + #ident_str;
         };
 
-		let name = self.ident.to_wsdf_title_case();
+        let name = self.ident.to_wsdf_title_case();
         let name: syn::Expr = cstr!(name);
         let blurb = self.meta.blurb();
         let ws_type = self.meta.ws_type_as_expr();
