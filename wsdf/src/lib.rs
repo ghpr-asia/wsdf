@@ -973,7 +973,7 @@ pub struct DissectorArgs<'a, 'tvb> {
     /// The previously registered ett indices. Keyed by wireshark's filter strings.
     pub etts: &'tvb EttIndices,
 
-    pub dissector_tables: &'tvb DissectorTables,
+    pub dtables: &'tvb DissectorTables,
 
     pub tvb: *mut epan_sys::tvbuff,
     pub pinfo: *mut epan_sys::packet_info,

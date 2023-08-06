@@ -1029,7 +1029,7 @@ impl UnitTuple {
             let args_next = wsdf::DissectorArgs {
                 hf_indices: args.hf_indices,
                 etts: args.etts,
-                dissector_tables: args.dissector_tables,
+                dtables: args.dtables,
                 tvb: args.tvb,
                 pinfo: args.pinfo,
                 proto_root: args.proto_root,
@@ -1088,7 +1088,7 @@ impl NamedField {
             let args_next = wsdf::DissectorArgs {
                 hf_indices: args.hf_indices,
                 etts: args.etts,
-                dissector_tables: args.dissector_tables,
+                dtables: args.dtables,
                 tvb: args.tvb,
                 pinfo: args.pinfo,
                 proto_root: args.proto_root,
