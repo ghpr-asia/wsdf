@@ -918,7 +918,7 @@ impl StructInnards {
         match self {
             StructInnards::UnitTuple(meta) => {
                 let decl_args =
-                    meta.decl_register_args(&parse_quote!(args.name), &parse_quote!(&args.prefix));
+                    meta.decl_register_args(&parse_quote!(args.name), &parse_quote!(args.prefix));
                 let call_register_func = meta.call_register_func();
                 parse_quote! {
                     #decl_args
