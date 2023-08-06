@@ -938,11 +938,7 @@ impl NamedField {
             };
         };
 
-        let field_ty = &self.meta.ty;
-        let maybe_bytes = self.meta.maybe_bytes();
-        let call_register_func: syn::Stmt = parse_quote! {
-            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(args_next, hf_indices, etts);
-        };
+        let call_register_func = self.meta.call_register_func();
 
         parse_quote! {
             #decl_prefix
@@ -970,6 +966,14 @@ impl FieldMeta {
 
     fn maybe_bytes(&self) -> syn::Type {
         self.options.maybe_bytes()
+    }
+
+    fn call_register_func(&self) -> syn::Stmt {
+        let field_ty = &self.ty;
+        let maybe_bytes = self.maybe_bytes();
+        parse_quote! {
+            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(args_next, hf_indices, etts);
+        }
     }
 }
 
