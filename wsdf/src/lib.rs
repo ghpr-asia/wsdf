@@ -997,9 +997,6 @@ pub struct DissectorArgs<'a, 'tvb> {
 
     /// Encoding for the field, if any.
     pub ws_enc: Option<u32>,
-
-    /// Whether the field is to be hidden.
-    pub hidden: bool,
 }
 
 /// Data required when registering fields.
