@@ -383,42 +383,30 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
             Ok(ret.to_token_stream())
         }
         syn::Data::Enum(data) => {
-            let mut struct_defs: Vec<syn::ItemStruct> = Vec::new();
-            let mut impl_blocks: Vec<syn::ItemImpl> = Vec::new();
-
-            for variant in &data.variants {
+            let new_struct_defs = data.variants.iter().map(|variant| -> syn::ItemStruct {
                 let newtype_ident = format_ident!("__{}", variant.ident);
                 let fields = &variant.fields;
 
-                let struct_def = match fields {
+                match fields {
                     syn::Fields::Named(_) => parse_quote! {
+                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident #fields
                     },
                     syn::Fields::Unnamed(_) => parse_quote! {
+                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident #fields;
                     },
                     syn::Fields::Unit => parse_quote! {
+                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident;
                     },
-                };
-
-                struct_defs.push(struct_def);
-
-                let new_variant = syn::Variant {
-                    ident: newtype_ident,
-                    ..variant.clone()
-                };
-                let struct_info = StructInnards::from_fields(fields)?;
-                let impl_block =
-                    derive_dissect_impl_struct(&new_variant.ident, &dissect_options, &struct_info);
-                impl_blocks.push(impl_block);
-            }
+                }
+            });
 
             let actual_impl = derive_dissect_impl_enum(&input.ident, &data.variants);
 
             Ok(quote! {
-                #(#struct_defs)*
-                #(#impl_blocks)*
+                #(#new_struct_defs)*
                 #actual_impl
             })
         }
