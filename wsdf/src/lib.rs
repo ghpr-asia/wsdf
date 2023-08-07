@@ -1196,6 +1196,22 @@ impl DissectorArgs<'_, '_> {
     }
 }
 
+pub trait Proto {
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn dissect_main(
+        tvb: *mut epan_sys::tvbuff,
+        pinfo: *mut epan_sys::_packet_info,
+        tree: *mut epan_sys::_proto_node,
+        data: *mut c_void,
+    ) -> c_int;
+
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn register_protoinfo();
+
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn register_handoff();
+}
+
 pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     /// We would like to query the value of some fields, e.g. `u8`. If the type supports this
     /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.

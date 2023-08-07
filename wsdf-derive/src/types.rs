@@ -748,6 +748,7 @@ impl DataType {
             let #WSDF_TAP_CTX = wsdf::tap::Context {
                 field: #field_val,
                 fields: #WSDF_FIELDS_STORE,
+                fields_local: &fields_local,
                 pinfo: #WSDF_PINFO,
                 packet: #WSDF_TVB_BUF,
                 offset: (#WSDF_START + #WSDF_OFFSET) as usize,
