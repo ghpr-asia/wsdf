@@ -1619,7 +1619,10 @@ impl<'a> Enum<'a> {
         let name_snake_case = variant.ident.to_wsdf_snake_case();
 
         parse_quote! {
-            let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case + "." + #name_snake_case;
+            let prefix_next
+                = args.prefix.to_owned()
+                + "." + #enum_ident_snake_case
+                + "." + #name_snake_case;
         }
     }
 
