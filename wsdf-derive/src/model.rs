@@ -959,13 +959,6 @@ impl StructInnards {
         }
     }
 
-    pub(crate) fn maybe_bytes(&self) -> syn::Type {
-        match self {
-            StructInnards::UnitTuple(unit) => unit.0.maybe_bytes(),
-            StructInnards::NamedFields { .. } => parse_quote! { () },
-        }
-    }
-
     pub(crate) fn add_to_tree_fn(&self, _dissect_options: &ProtocolFieldOptions) -> syn::ItemFn {
         // @todo: account for _dissect_options
         let dissect_fields = self.dissect_fields();
