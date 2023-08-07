@@ -973,6 +973,9 @@ impl StructInnards {
                 let offset = args.offset;
                 let parent = args.add_subtree();
                 #(#dissect_fields)*
+                unsafe {
+                    wsdf::epan_sys::proto_item_set_len(parent, (offset - args.offset) as _);
+                }
                 offset
             },
         };
