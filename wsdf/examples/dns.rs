@@ -1,18 +1,19 @@
 #![allow(dead_code)]
 
-use wsdf::tap::{Field, Offset, Packet};
-use wsdf::{version, Dispatch, Protocol, ProtocolField};
+use wsdf::tap::{Field, FieldsLocal, Offset, Packet};
+use wsdf::{protocol, version, Dissect, Proto};
 
 version!("0.0.1", 4, 0);
+protocol!(BabyDns);
 
-#[derive(Protocol)]
+#[derive(Proto, Dissect)]
 #[wsdf(
     proto_desc = "Baby DNS by wsdf",
     proto_name = "Baby DNS",
     proto_filter = "baby_dns",
-    decode_from = [("udp.port", 53)],
+    decode_from = [("baby_udp.port", 53)],
 )]
-struct BabyDNS {
+struct BabyDns {
     identification: u16,
     flags: u16,
     #[wsdf(rename = "Number of Questions")]
@@ -33,7 +34,7 @@ struct BabyDNS {
     additional_information: Vec<ResourceRecord>,
 }
 
-#[derive(ProtocolField)]
+#[derive(Dissect)]
 struct Question {
     name: CharStr,
     #[wsdf(decode_with = "decode_qtype", rename = "Type")]
@@ -42,10 +43,10 @@ struct Question {
     class: u16,
 }
 
-#[derive(ProtocolField)]
+#[derive(Dissect)]
 struct ResourceRecord {
     name: CharStr,
-    #[wsdf(decode_with = "decode_qtype", rename = "Type")]
+    #[wsdf(save, decode_with = "decode_qtype", rename = "Type")]
     type_: u16,
     #[wsdf(decode_with = "decode_class")]
     class: u16,
@@ -53,11 +54,25 @@ struct ResourceRecord {
     ttl: Seconds,
     #[wsdf(rename = "RR Data Length")]
     rdlength: u16,
-    #[wsdf(dispatch_field = "type_", rename = "RR Data")]
+    #[wsdf(get_variant = "get_rdata_type", rename = "RR Data")]
     rdata: Rdata,
 }
 
-#[derive(ProtocolField, Dispatch)]
+fn get_rdata_type(FieldsLocal(store): FieldsLocal) -> &'static str {
+    let ty = store.get_u16("type_").unwrap();
+    match ty {
+        1 => "A",
+        2 => "NS",
+        5 => "Cname",
+        6 => "Soa",
+        12 => "Ptr",
+        15 => "MX",
+        28 => "Aaaa",
+        _ => "Unknown",
+    }
+}
+
+#[derive(Dissect)]
 enum Rdata {
     #[wsdf(rename = "A (Host address)")]
     A(#[wsdf(typ = "FT_IPv4", display = "BASE_NETMASK")] u32),
@@ -104,31 +119,15 @@ enum Rdata {
         mail_exchanger: CharStr,
     },
     #[wsdf(rename = "AAAA (IPv6 address)")]
-    Aaaa(#[wsdf(typ = "FT_IPv6", display = "BASE_NONE")] [u8; 16]),
+    Aaaa(#[wsdf(bytes, typ = "FT_IPv6", display = "BASE_NONE")] [u8; 16]),
     // To keep this example simple, we ignore the other resource records.
-    Unknown(#[wsdf(consume_with = "drain_rdata")] Vec<u8>),
-}
-
-impl Rdata {
-    fn dispatch_type_(type_: &u16) -> RdataDispatch {
-        use RdataDispatch::*;
-        match *type_ {
-            1 => A,
-            2 => NS,
-            5 => Cname,
-            6 => Soa,
-            12 => Ptr,
-            15 => MX,
-            28 => Aaaa,
-            _ => Unknown, // ignore the other resource records for now
-        }
-    }
+    Unknown(#[wsdf(bytes, consume_with = "drain_rdata")] Vec<u8>),
 }
 
 /// Represents the stringy fields in DNS. We isolate it into its own type because its decoding is
 /// slightly complex. See CharStr::consume.
-#[derive(ProtocolField)]
-struct CharStr(#[wsdf(consume_with = "CharStr::consume")] Vec<u8>);
+#[derive(Dissect)]
+struct CharStr(#[wsdf(bytes, consume_with = "CharStr::consume")] Vec<u8>);
 
 impl CharStr {
     // Slightly convoluted, see https://www.zytrax.com/books/dns/ch15/#answer
@@ -203,7 +202,7 @@ fn decode_qtype(Field(x): Field<u16>) -> String {
     s.to_string()
 }
 
-#[derive(ProtocolField)]
+#[derive(Dissect)]
 struct Seconds(#[wsdf(decode_with = "Seconds::decode")] u32);
 
 impl Seconds {
@@ -225,9 +224,7 @@ impl Seconds {
 /// Drain all the data which belongs to a resource record.
 fn drain_rdata(Packet(packet): Packet, Offset(offset): Offset) -> (usize, &'static str) {
     // The number of bytes in the RR is stored in the previous two bytes.
-    let mut n: u16 = 0;
-    n += packet[offset - 2] as u16;
-    n <<= 8;
-    n += packet[offset - 1] as u16;
-    (n as usize, "Gave up on decoding (╯°□°)╯︵ ┻━┻")
+    let n = u16::from_be_bytes([packet[offset - 2], packet[offset - 1]]) as usize;
+    let n = n.clamp(0, packet.len() - offset);
+    (n, "Gave up on decoding (╯°□°)╯︵ ┻━┻")
 }
