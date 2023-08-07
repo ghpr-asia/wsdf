@@ -1,10 +1,12 @@
 //! This crate provides the derive macros for [wsdf](http://docs.rs/wsdf), along with some helpers.
 
+use model::Enum;
 use proc_macro::TokenStream;
 
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
 use syn::parse_quote;
+use syn::punctuated::Punctuated;
 
 mod attributes;
 mod model;
@@ -368,24 +370,58 @@ pub fn derive_dispatch(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Dissect, attributes(wsdf))]
 pub fn derive_dissect(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    let ret = derive_dissect_impl(&input)
-        .map(|code| quote! { #code })
-        .unwrap_or_else(|e| e.to_compile_error());
+    let ret = derive_dissect_impl(&input).unwrap_or_else(|e| e.to_compile_error());
     ret.into()
 }
 
-fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
+fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let dissect_options = init_options::<ProtocolFieldOptions>(&input.attrs)?;
     match &input.data {
         syn::Data::Struct(data) => {
             let struct_info = StructInnards::from_fields(&data.fields)?;
-            Ok(derive_dissect_impl_struct(
-                &input.ident,
-                &dissect_options,
-                &struct_info,
-            ))
+            let ret = derive_dissect_impl_struct(&input.ident, &dissect_options, &struct_info);
+            Ok(ret.to_token_stream())
         }
-        syn::Data::Enum(_) => todo!(),
+        syn::Data::Enum(data) => {
+            let mut struct_defs: Vec<syn::ItemStruct> = Vec::new();
+            let mut impl_blocks: Vec<syn::ItemImpl> = Vec::new();
+
+            for variant in &data.variants {
+                let newtype_ident = format_ident!("__{}", variant.ident);
+                let fields = &variant.fields;
+
+                let struct_def = match fields {
+                    syn::Fields::Named(_) => parse_quote! {
+                        struct #newtype_ident #fields
+                    },
+                    syn::Fields::Unnamed(_) => parse_quote! {
+                        struct #newtype_ident #fields;
+                    },
+                    syn::Fields::Unit => parse_quote! {
+                        struct #newtype_ident;
+                    },
+                };
+
+                struct_defs.push(struct_def);
+
+                let new_variant = syn::Variant {
+                    ident: newtype_ident,
+                    ..variant.clone()
+                };
+                let struct_info = StructInnards::from_fields(fields)?;
+                let impl_block =
+                    derive_dissect_impl_struct(&new_variant.ident, &dissect_options, &struct_info);
+                impl_blocks.push(impl_block);
+            }
+
+            let actual_impl = derive_dissect_impl_enum(&input.ident, &data.variants);
+
+            Ok(quote! {
+                #(#struct_defs)*
+                #(#impl_blocks)*
+                #actual_impl
+            })
+        }
         syn::Data::Union(data) => make_err(
             &data.union_token,
             "#[derive(Dissect)] cannot be used on unions",
@@ -411,6 +447,113 @@ fn derive_dissect_impl_struct(
             #fn_size
             #fn_register
             fn emit(_args: &wsdf::DissectorArgs) {}
+        }
+    }
+}
+
+fn derive_dissect_impl_enum(
+    ident: &syn::Ident,
+    variants: &Punctuated<syn::Variant, syn::Token![,]>,
+) -> syn::ItemImpl {
+    // let enum_ident_snake_case = ident.to_wsdf_snake_case();
+    // let decl_prefix_next: syn::Stmt = parse_quote! {
+    //     let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case;
+    // };
+    // let setup_args_next: syn::Stmt = parse_quote! {
+    //     let args_next = wsdf::DissectorArgs {
+    //         hf_indices: args.hf_indices,
+    //         etts: args.etts,
+    //         dtables: args.dtables,
+    //         tvb: args.tvb,
+    //         pinfo: args.pinfo,
+    //         proto_root: args.proto_root,
+    //         data: args.data,
+
+    //         prefix: args.prefix,
+    //         offset: args.offset,
+    //         parent: args.parent,
+    //         variant: std::option::Option::None,
+    //         list_len: std::option::Option::None,
+    //         ws_enc: std::option::Option::None,
+    //     };
+    // };
+
+    // let add_to_tree_branches = variants.iter().map(|variant| -> syn::Arm {
+    //     let name = variant.ident.to_string();
+    //     let struct_name = format_ident!("__{}", variant.ident);
+    //     let name_snake_case = variant.ident.to_wsdf_snake_case();
+
+    //     let decl_prefix_next: syn::Stmt = parse_quote! {
+    //         let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case + "." + #name_snake_case;
+    //     };
+
+    //     parse_quote! {
+    //         Some(#name) => {
+    //             #decl_prefix_next
+    //             #setup_args_next
+    //             #struct_name::add_to_tree(&args_next, fields)
+    //         }
+    //     }
+    // });
+
+    // let size_branches = variants.iter().map(|variant| -> syn::Arm {
+    //     let name = variant.ident.to_string();
+    //     let struct_name = format_ident!("__{}", variant.ident);
+    //     let name_snake_case = variant.ident.to_wsdf_snake_case();
+
+    //     let decl_prefix_next: syn::Stmt = parse_quote! {
+    //         let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case + "." + #name_snake_case;
+    //     };
+
+    //     parse_quote! {
+    //         Some(#name) => {
+    //             #decl_prefix_next
+    //             #setup_args_next
+    //             #struct_name::size(&args_next, fields)
+    //         }
+    //     }
+    // });
+
+    // let register_stmts = variants.iter().flat_map(|variant| -> Vec<syn::Stmt> {
+    //     let name = variant.ident.to_string();
+    //     let name_cstr: syn::Expr = cstr!(name);
+    //     let name_snake_case = variant.ident.to_wsdf_snake_case();
+    //     let struct_name = format_ident!("__{}", variant.ident);
+
+    //     let decl_prefix_next: syn::Stmt = parse_quote! {
+    //         let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case + "." + #name_snake_case;
+    //     };
+    //     let decl_args_next: syn::Stmt = parse_quote! {
+    //         let args_next = wsdf::RegisterArgs {
+    //             proto_id: args.proto_id,
+    //             name: #name_cstr,
+    //             prefix: &prefix_next,
+    //             blurb: std::ptr::null(), // @todo
+    //             ws_type: std::option::Option::None,
+    //             ws_display: std::option::Option::None,
+    //         };
+    //     };
+
+    //     parse_quote! {
+    //         #decl_prefix_next
+    //         #decl_args_next
+    //         #struct_name::register(&args_next, ws_indices);
+    //     }
+    // });
+
+    let enum_data = Enum::new(ident, variants);
+
+    let fn_add_to_tree = enum_data.add_to_tree_fn();
+    let fn_size = enum_data.size_fn();
+    let fn_register = enum_data.register_fn();
+
+    parse_quote! {
+        impl<'tvb> wsdf::Dissect<'tvb, ()> for #ident {
+            type Emit = ();
+            #fn_add_to_tree
+            #fn_size
+            #fn_register
+            fn emit(args: &wsdf::DissectorArgs<'_, 'tvb>) {}
         }
     }
 }

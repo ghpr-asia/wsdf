@@ -1174,10 +1174,6 @@ impl FieldMeta {
         self.options.ws_enc_as_expr()
     }
 
-    fn dispatch_as_expr(&self) -> syn::Expr {
-        self.options.dispatch_as_expr()
-    }
-
     fn size_hint_as_expr(&self) -> syn::Expr {
         self.options.size_hint_as_expr()
     }
@@ -1252,16 +1248,6 @@ impl FieldOptions {
             Some(enc) => {
                 let ws_enc = format_ws_enc(enc);
                 parse_quote! { std::option::Option::Some(#ws_enc) }
-            }
-            None => parse_quote! { std::option::Option::None },
-        }
-    }
-
-    fn dispatch_as_expr(&self) -> syn::Expr {
-        match &self.dispatch {
-            Some(dispatch) => {
-                let field_name = format_ident!("__{dispatch}");
-                parse_quote! { std::option::Option::Some(#field_name) }
             }
             None => parse_quote! { std::option::Option::None },
         }
@@ -1613,4 +1599,122 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
             }
         })
         .collect()
+}
+
+pub(crate) struct Enum<'a> {
+    ident: &'a syn::Ident,
+    variants: &'a Punctuated<syn::Variant, syn::Token![,]>,
+}
+
+impl<'a> Enum<'a> {
+    pub(crate) fn new(
+        ident: &'a syn::Ident,
+        variants: &'a Punctuated<syn::Variant, syn::Token![,]>,
+    ) -> Self {
+        Self { ident, variants }
+    }
+
+    fn decl_prefix_next(&self, variant: &syn::Variant) -> syn::Stmt {
+        let enum_ident_snake_case = self.ident.to_wsdf_snake_case();
+        let name_snake_case = variant.ident.to_wsdf_snake_case();
+
+        parse_quote! {
+            let prefix_next = args.prefix.to_owned() + "." + #enum_ident_snake_case + "." + #name_snake_case;
+        }
+    }
+
+    fn decl_dissector_args() -> syn::Stmt {
+        parse_quote! {
+            let args_next = wsdf::DissectorArgs {
+                hf_indices: args.hf_indices,
+                etts: args.etts,
+                dtables: args.dtables,
+                tvb: args.tvb,
+                pinfo: args.pinfo,
+                proto_root: args.proto_root,
+                data: args.data,
+
+                prefix: &prefix_next,
+                offset: args.offset,
+                parent: args.parent,
+                variant: std::option::Option::None,
+                list_len: std::option::Option::None,
+                ws_enc: std::option::Option::None,
+            };
+        }
+    }
+
+    pub(crate) fn add_to_tree_fn(&self) -> syn::ItemFn {
+        let inner = self.match_and_call_on_variant(&parse_quote!(add_to_tree));
+        parse_quote! {
+            fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                #(#inner)*
+            }
+        }
+    }
+
+    pub(crate) fn size_fn(&self) -> syn::ItemFn {
+        let inner = self.match_and_call_on_variant(&parse_quote!(size));
+        parse_quote! {
+            fn size(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                #(#inner)*
+            }
+        }
+    }
+
+    pub(crate) fn register_fn(&self) -> syn::ItemFn {
+        let register_stmts = self.variants.iter().flat_map(|variant| -> Vec<syn::Stmt> {
+            let name = variant.ident.to_string();
+            let name_cstr: syn::Expr = cstr!(name);
+            let struct_name = format_ident!("__{}", variant.ident);
+
+            let decl_prefix_next = self.decl_prefix_next(variant);
+            let decl_args_next: syn::Stmt = parse_quote! {
+                let args_next = wsdf::RegisterArgs {
+                    proto_id: args.proto_id,
+                    name: #name_cstr,
+                    prefix: &prefix_next,
+                    blurb: std::ptr::null(), // @todo
+                    ws_type: std::option::Option::None,
+                    ws_display: std::option::Option::None,
+                };
+            };
+
+            parse_quote! {
+                #decl_prefix_next
+                #decl_args_next
+                #struct_name::register(&args_next, ws_indices);
+            }
+        });
+        parse_quote! {
+            fn register(args: &wsdf::RegisterArgs, ws_indices: &mut wsdf::WsIndices) {
+                #(#register_stmts)*
+            }
+        }
+    }
+
+    fn match_and_call_on_variant(&self, call: &syn::Path) -> Vec<syn::Stmt> {
+        let arms = self.variants.iter().map(|variant| -> syn::Arm {
+            let name = variant.ident.to_string();
+            let decl_prefix_next = self.decl_prefix_next(variant);
+            let setup_args_next = Self::decl_dissector_args();
+            let struct_name = format_ident!("__{}", variant.ident);
+
+            parse_quote! {
+                Some(#name) => {
+                    #decl_prefix_next
+                    #setup_args_next
+                    #struct_name::#call(&args_next, fields)
+                }
+            }
+        });
+        let enum_ident_str = self.ident.to_string();
+        parse_quote! {
+            match args.variant {
+                #(#arms)*
+                Some(v) => panic!("unexpected variant {v} of {}", stringify!(#enum_ident_str)),
+                None => panic!("unable to determine variant of {}", stringify!(#enum_ident_str)),
+            }
+        }
+    }
 }
