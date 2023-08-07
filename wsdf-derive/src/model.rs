@@ -1091,6 +1091,7 @@ impl NamedField {
         let dispatch = self.meta.dispatch_as_expr();
         let list_len = self.meta.size_hint_as_expr();
         let ws_enc = self.meta.ws_enc_as_expr();
+
         parse_quote! {
             let args_next = wsdf::DissectorArgs {
                 hf_indices: args.hf_indices,
@@ -1151,11 +1152,6 @@ impl FieldMeta {
                 let maybe_bytes = self.maybe_bytes();
                 parse_quote! {
                     <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, ws_indices);
-                }
-            }
-            Some(Subdissector::DecodeAs(table_name)) => {
-                parse_quote! {
-                    <() as wsdf::SubdissectorKey>::create_table(&args_next, #table_name, ws_indices.dtable);
                 }
             }
             Some(Subdissector::DecodeAs(table_name)) => parse_quote! {
@@ -1358,33 +1354,9 @@ impl FieldDissectionPlan<'_> {
     fn exec_add_strategy(&self) -> Vec<syn::Stmt> {
         let ty = &self.meta.ty;
         let maybe_bytes = self.meta.maybe_bytes();
+
         match &self.add_strategy {
-            AddStrategy::Subdissect(subd) => {
-                let setup_tvb_next: syn::Stmt = parse_quote! {
-                    let tvb_next = <#ty as wsdf::Subdissect<'tvb>>::setup_tvb_next(&args_next);
-                };
-                let update_args_next: syn::Stmt = parse_quote! {
-                    let args_next = wsdf::DissectorArgs {
-                        tvb: tvb_next,
-                        ..args_next
-                    };
-                };
-                let try_subdissector: Vec<syn::Stmt> = match subd {
-                    Subdissector::DecodeAs(table_name) => parse_quote! {
-                        let offset = offset + <#ty as wsdf::Subdissect<'tvb>>::try_subdissector(&args_next, #table_name, &());
-                    },
-                    Subdissector::Table {
-                        table_name,
-                        fields,
-                        typ,
-                    } => todo!(),
-                };
-                parse_quote! {
-                    #setup_tvb_next
-                    #update_args_next
-                    #(#try_subdissector)*
-                }
-            }
+            AddStrategy::Subdissect(subd) => self.try_subdissector(subd),
             AddStrategy::ConsumeWith(consume_fn) => {
                 let call_consume_fn: syn::Stmt = parse_quote! {
                     let (n, s) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
@@ -1403,6 +1375,56 @@ impl FieldDissectionPlan<'_> {
             AddStrategy::Default => vec![parse_quote! {
                 let offset = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::add_to_tree(&args_next, fields);
             }],
+        }
+    }
+
+    fn try_subdissector(&self, subd: &Subdissector) -> Vec<syn::Stmt> {
+        let ty = &self.meta.ty;
+
+        let setup_tvb_next: syn::Stmt = parse_quote! {
+            let tvb_next = <#ty as wsdf::Subdissect<'tvb>>::setup_tvb_next(&args_next);
+        };
+        let update_args_next: syn::Stmt = parse_quote! {
+            let args_next = wsdf::DissectorArgs {
+                tvb: tvb_next,
+                ..args_next
+            };
+        };
+        let try_subdissector: Vec<syn::Stmt> = match subd {
+            Subdissector::DecodeAs(table_name) => parse_quote! {
+                let offset = offset + <#ty as wsdf::Subdissect<'tvb>>::try_subdissector(&args_next, #table_name, &());
+            },
+            Subdissector::Table {
+                table_name, fields, ..
+            } => {
+                let try_fields = fields.iter().map(|field| -> syn::ExprIf {
+                    let field_var_name = format_ident!("__{field}");
+                    parse_quote! {
+                        if nr_bytes_subdissected == 0 {
+                            nr_bytes_subdissected
+                                = <#ty as wsdf::Subdissect<'tvb>>::try_subdissector(
+                                    &args_next,
+                                    #table_name,
+                                    &#field_var_name,
+                                );
+                        }
+                    }
+                });
+                parse_quote! {
+                    let mut nr_bytes_subdissected = 0;
+                    #(#try_fields)*
+                    if nr_bytes_subdissected == 0 {
+                        nr_bytes_subdissected = args_next.call_data_dissector();
+                    }
+                    let offset = offset + nr_bytes_subdissected;
+                }
+            }
+        };
+
+        parse_quote! {
+            #setup_tvb_next
+            #update_args_next
+            #(#try_subdissector)*
         }
     }
 }

@@ -1176,6 +1176,10 @@ impl DissectorArgs<'_, '_> {
         }
         parent
     }
+
+    pub fn call_data_dissector(&self) -> usize {
+        unsafe { epan_sys::call_data_dissector(self.tvb, self.pinfo, self.proto_root) as _ }
+    }
 }
 
 pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
@@ -1217,7 +1221,11 @@ pub trait SubdissectorKey {
 }
 
 pub trait Subdissect<'tvb>: Dissect<'tvb, [u8]> {
-    fn try_subdissector(args: &DissectorArgs, name: &'static str, key: &impl SubdissectorKey) -> usize {
+    fn try_subdissector(
+        args: &DissectorArgs,
+        name: &'static str,
+        key: &impl SubdissectorKey,
+    ) -> usize {
         key.try_subdissector(args, name)
     }
 
