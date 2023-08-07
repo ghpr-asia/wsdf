@@ -1821,6 +1821,7 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
     type Emit = &'tvb [u8];
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        // @todo: clarify this length thing
         debug_assert!(args.list_len.is_some());
         debug_assert!(args.ws_enc.is_none());
 
@@ -1841,6 +1842,43 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
         // @todo: clarify this length thing
         let len = args.list_len.unwrap_or(args.data.len() - args.offset);
         &args.data[args.offset..args.offset + len]
+    }
+}
+
+impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        debug_assert_eq!(nr_bytes, args.list_len.unwrap());
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s)
+    }
+
+    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
+        let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
+        store.insert_bytes(args.prefix, value);
+    }
+}
+
+impl<'tvb> Dissect<'tvb, [u8]> for &[u8] {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore) -> usize {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::size(args, fields)
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::register(args, ws_indices)
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::emit(args)
     }
 }
 
