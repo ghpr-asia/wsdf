@@ -862,15 +862,19 @@ pub(crate) enum StructInnards {
 
 pub(crate) struct UnitTuple(pub(crate) FieldMeta);
 
+#[derive(Clone)]
 pub(crate) struct NamedField {
     ident: syn::Ident,
     meta: FieldMeta,
 }
 
+#[derive(Clone)]
 pub(crate) struct FieldMeta {
     pub(crate) ty: syn::Type,
     pub(crate) docs: Option<String>,
     pub(crate) options: FieldOptions,
+
+    subdissector_key_type: Option<syn::Type>,
 }
 
 impl StructInnards {
@@ -888,14 +892,13 @@ impl StructInnards {
             let ident = field.ident.clone().unwrap(); // safe since the fields are named
             let options = init_options::<FieldOptions>(&field.attrs)?;
             let docs = field.attrs.iter().find_map(get_docs);
-            named_fields.push(NamedField {
-                ident,
-                meta: FieldMeta {
-                    ty: field.ty.clone(),
-                    docs,
-                    options,
-                },
-            });
+            let meta = FieldMeta {
+                ty: field.ty.clone(),
+                docs,
+                options,
+                subdissector_key_type: None,
+            };
+            named_fields.push(NamedField { ident, meta });
         }
         Ok(StructInnards::NamedFields {
             fields: named_fields,
@@ -913,6 +916,7 @@ impl StructInnards {
             ty: field.ty.clone(),
             docs,
             options,
+            subdissector_key_type: None,
         })))
     }
 
@@ -926,10 +930,13 @@ impl StructInnards {
                     #call_register_func
                 }
             }
-            StructInnards::NamedFields { fields } => fields
-                .iter()
-                .flat_map(NamedField::registration_steps)
-                .collect(),
+            StructInnards::NamedFields { fields } => {
+                let fields = assign_subdissector_key_types(fields);
+                fields
+                    .iter()
+                    .flat_map(NamedField::registration_steps)
+                    .collect()
+            }
         }
     }
 
@@ -1139,9 +1146,25 @@ impl FieldMeta {
 
     fn call_register_func(&self) -> syn::Stmt {
         let field_ty = &self.ty;
-        let maybe_bytes = self.maybe_bytes();
-        parse_quote! {
-            <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, ws_indices);
+        match &self.options.subdissector {
+            None => {
+                let maybe_bytes = self.maybe_bytes();
+                parse_quote! {
+                    <#field_ty as wsdf::Dissect<'tvb, #maybe_bytes>>::register(&args_next, ws_indices);
+                }
+            }
+            Some(Subdissector::DecodeAs(table_name)) => {
+                parse_quote! {
+                    <() as wsdf::SubdissectorKey>::create_table(&args_next, #table_name, ws_indices.dtable);
+                }
+            }
+            Some(Subdissector::Table { table_name, .. }) => {
+                debug_assert!(self.subdissector_key_type.is_some());
+                let key_type = self.subdissector_key_type.as_ref().unwrap();
+                parse_quote! {
+                    <#key_type as wsdf::SubdissectorKey>::create_table(args.proto_id, #table_name, ws_indices.dtable);
+                }
+            }
         }
     }
 
@@ -1354,6 +1377,36 @@ impl FieldDissectionPlan<'_> {
             }],
         }
     }
+}
+
+fn assign_subdissector_key_types(fields: &[NamedField]) -> Vec<NamedField> {
+    fields
+        .iter()
+        .map(|field| {
+            let new_meta = match &field.meta.options.subdissector {
+                Some(Subdissector::DecodeAs(_)) | None => FieldMeta {
+                    subdissector_key_type: None,
+                    ..field.meta.clone()
+                },
+                Some(Subdissector::Table { fields: keys, .. }) => {
+                    let mut new_meta = field.meta.clone();
+                    for field in fields {
+                        for key in keys {
+                            if &field.ident == key {
+                                new_meta.subdissector_key_type = Some(field.meta.ty.clone());
+                            }
+                        }
+                    }
+                    debug_assert!(new_meta.subdissector_key_type.is_some());
+                    new_meta
+                }
+            };
+            NamedField {
+                meta: new_meta,
+                ..field.clone()
+            }
+        })
+        .collect()
 }
 
 fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan> {
