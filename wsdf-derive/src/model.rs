@@ -1299,7 +1299,7 @@ impl FieldOptions {
     }
 }
 
-pub(crate) struct FieldDissectionPlan<'a> {
+struct FieldDissectionPlan<'a> {
     emit: bool,
     save: bool,
     build_ctx: bool,
@@ -1311,6 +1311,7 @@ pub(crate) struct FieldDissectionPlan<'a> {
 
 enum AddStrategy {
     Subdissect(Subdissector),
+    DecodeWith(syn::Path),
     ConsumeWith(syn::Path),
     Hidden,
     Default,
@@ -1319,14 +1320,23 @@ enum AddStrategy {
 impl AddStrategy {
     fn from_field_options(options: &FieldOptions) -> Self {
         debug_assert!(matches!(
-            (&options.consume_with, &options.subdissector),
-            (Some(_), None) | (None, Some(_)) | (None, None)
+            (
+                &options.decode_with,
+                &options.consume_with,
+                &options.subdissector
+            ),
+            (Some(_), None, None)
+                | (None, Some(_), None)
+                | (None, None, Some(_))
+                | (None, None, None)
         ));
 
         if let Some(subd) = &options.subdissector {
             AddStrategy::Subdissect(subd.clone())
         } else if let Some(consume_fn) = &options.consume_with {
             AddStrategy::ConsumeWith(consume_fn.clone())
+        } else if let Some(decode_fn) = &options.decode_with {
+            AddStrategy::DecodeWith(decode_fn.clone())
         } else if let Some(true) = options.hidden {
             AddStrategy::Hidden
         } else {
@@ -1395,7 +1405,7 @@ impl FieldDissectionPlan<'_> {
         let ty = &self.meta.ty;
         let maybe_bytes = self.meta.maybe_bytes();
         Some(parse_quote! {
-            <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::save(&args_next, fields);
+            <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::save(&args_next, fields, &mut fields_local);
         })
     }
 
@@ -1407,6 +1417,7 @@ impl FieldDissectionPlan<'_> {
             let ctx = wsdf::tap::Context {
                 field: #field_value,
                 fields,
+                fields_local: &fields_local,
                 pinfo: args.pinfo,
                 packet: args.data,
                 offset,
@@ -1432,15 +1443,16 @@ impl FieldDissectionPlan<'_> {
         match &self.add_strategy {
             AddStrategy::Subdissect(subd) => self.try_subdissector(subd),
             AddStrategy::ConsumeWith(consume_fn) => {
-                let call_consume_fn: syn::Stmt = parse_quote! {
-                    let (n, s) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
-                };
-                let call_add_to_tree: syn::Stmt = parse_quote! {
-                    let offset = <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
-                };
                 parse_quote! {
-                    #call_consume_fn
-                    #call_add_to_tree
+                    let (n, s) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
+                    let offset = <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
+                }
+            }
+            AddStrategy::DecodeWith(decode_fn) => {
+                parse_quote! {
+                    let s = wsdf::tap::handle_decode_with(&ctx, #decode_fn);
+                    let n = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
+                    let offset = <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
                 }
             }
             AddStrategy::Hidden => self.handle_hidden(),
@@ -1618,14 +1630,10 @@ impl<'a> Enum<'a> {
     }
 
     fn decl_prefix_next(&self, variant: &syn::Variant) -> syn::Stmt {
-        let enum_ident_snake_case = self.ident.to_wsdf_snake_case();
         let name_snake_case = variant.ident.to_wsdf_snake_case();
 
         parse_quote! {
-            let prefix_next
-                = args.prefix.to_owned()
-                + "." + #enum_ident_snake_case
-                + "." + #name_snake_case;
+            let prefix_next = args.prefix.to_owned() + "." + #name_snake_case;
         }
     }
 
@@ -1707,7 +1715,7 @@ impl<'a> Enum<'a> {
         let arms = self.variants.iter().map(|variant| -> syn::Arm {
             let name = variant.ident.to_string();
             let decl_prefix_next = self.decl_prefix_next(variant);
-            let setup_args_next = Self::decl_dissector_args();
+            let setup_args_next = Self::decl_dissector_args(variant);
             let struct_name = format_ident!("__{}", variant.ident);
 
             parse_quote! {
@@ -1722,8 +1730,8 @@ impl<'a> Enum<'a> {
         parse_quote! {
             match args.variant {
                 #(#arms)*
-                Some(v) => panic!("unexpected variant {v} of {}", stringify!(#enum_ident_str)),
-                None => panic!("unable to determine variant of {}", stringify!(#enum_ident_str)),
+                Some(v) => panic!("unexpected variant {v} of {}", #enum_ident_str),
+                None => panic!("unable to determine variant of {}", #enum_ident_str),
             }
         }
     }
