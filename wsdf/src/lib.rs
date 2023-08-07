@@ -1141,15 +1141,10 @@ impl DissectorTables {
         if self.0.contains_key(&name) {
             return self.0[&name];
         }
-        let name_cstr = CString::new(name).unwrap();
+        let name_cstr =
+            Box::leak(CString::new(name).unwrap().into_boxed_c_str()).as_ptr() as *const c_char;
         let table_ptr = unsafe {
-            epan_sys::register_dissector_table(
-                name_cstr.as_ptr(),
-                name_cstr.as_ptr(),
-                proto_id,
-                ws_type,
-                ws_display,
-            )
+            epan_sys::register_dissector_table(name_cstr, name_cstr, proto_id, ws_type, ws_display)
         };
         self.0.insert(name, table_ptr);
         table_ptr
@@ -1438,7 +1433,8 @@ fn add_to_tree_format_value_int(
 /// Registers a hf index.
 fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: c_uint) -> c_int {
     let hf_index_ptr = Box::leak(Box::new(-1)) as *mut _;
-    let abbrev = CString::new(args.prefix).unwrap();
+    let abbrev =
+        Box::leak(CString::new(args.prefix).unwrap().into_boxed_c_str()).as_ptr() as *const c_char;
     let type_ = args.ws_type.unwrap_or(default_type);
     let display = args.ws_display.unwrap_or(default_display);
 
@@ -1446,7 +1442,7 @@ fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: 
         p_id: hf_index_ptr,
         hfinfo: epan_sys::header_field_info {
             name: args.name,
-            abbrev: abbrev.as_ptr(),
+            abbrev,
             type_,
             display,
             strings: std::ptr::null(),
@@ -1468,7 +1464,7 @@ fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: 
     unsafe { *hf_index_ptr }
 }
 
-const DEFAULT_INT_ENCODING: u32 = epan_sys::BIG_ENDIAN;
+const DEFAULT_INT_ENCODING: u32 = epan_sys::ENC_BIG_ENDIAN;
 const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
 
 impl Dissect<'_, ()> for () {
@@ -1918,10 +1914,6 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
     type Emit = &'tvb [u8];
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore<'tvb>) -> usize {
-        // There should be no ws_enc passed to the function, since this method is specifically
-        // meant to dissect bytes, which always have ENC_NA.
-        debug_assert!(args.ws_enc.is_none());
-
         add_to_tree_single_field(args, N, epan_sys::ENC_NA)
     }
 
@@ -1933,10 +1925,6 @@ impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
         const DEFAULT_DISPLAY: c_int =
             (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
         const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_BYTES;
-
-        // This entire impl block is dedicated to FT_BYTES types. So we would not expect a custom
-        // type to be passed into here.
-        debug_assert!(args.ws_type.is_none());
 
         let hf_index = register_hf_index(args, DEFAULT_DISPLAY, DEFAULT_TYPE);
         ws_indices.hf.insert(args.prefix, hf_index);
@@ -2005,8 +1993,6 @@ impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
         s: &impl std::fmt::Display,
         nr_bytes: usize,
     ) -> usize {
-        debug_assert_eq!(nr_bytes, args.list_len.unwrap());
-
         add_to_tree_format_value_bytes(args, nr_bytes, s)
     }
 
@@ -2049,7 +2035,7 @@ impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
         s: &impl std::fmt::Display,
         nr_bytes: usize,
     ) -> usize {
-        debug_assert_eq!(nr_bytes, args.list_len.unwrap());
+        debug_assert_eq!(nr_bytes, args.list_len.unwrap_or(nr_bytes));
 
         add_to_tree_format_value_bytes(args, nr_bytes, s)
     }
