@@ -995,7 +995,7 @@ impl StructInnards {
             }
         };
         parse_quote! {
-            fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore) -> usize {
+            fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
                 #(#fn_contents)*
             }
         }
