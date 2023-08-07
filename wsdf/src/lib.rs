@@ -1216,15 +1216,37 @@ pub trait SubdissectorKey {
     fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize;
 }
 
-pub trait Subdissect {
-    fn subdissect(args: &DissectorArgs, name: &'static str, key: &impl SubdissectorKey) -> usize {
+pub trait Subdissect<'tvb>: Dissect<'tvb, [u8]> {
+    fn try_subdissector(args: &DissectorArgs, name: &'static str, key: &impl SubdissectorKey) -> usize {
         key.try_subdissector(args, name)
+    }
+
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff;
+}
+
+fn setup_tvb_next_with_len(args: &DissectorArgs, len: Option<usize>) -> *mut epan_sys::tvbuff {
+    let tvb_reported_len = unsafe { epan_sys::tvb_reported_length(args.tvb) as usize };
+    let tvb_next_len = len.unwrap_or(tvb_reported_len - args.offset);
+    unsafe { epan_sys::tvb_new_subset_length(args.tvb, args.offset as _, tvb_next_len as _) }
+}
+
+impl Subdissect<'_> for Vec<u8> {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, args.list_len)
     }
 }
 
-impl Subdissect for Vec<u8> {}
-impl<const N: usize> Subdissect for [u8; N] {}
-impl Subdissect for &[u8] {}
+impl Subdissect<'_> for &[u8] {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, args.list_len)
+    }
+}
+
+impl<const N: usize> Subdissect<'_> for [u8; N] {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, Some(N))
+    }
+}
 
 fn dissector_try_uint(args: &DissectorArgs, name: &'static str, value: u32) -> usize {
     let subdissector = args.dtables.get(name).unwrap();

@@ -1158,6 +1158,9 @@ impl FieldMeta {
                     <() as wsdf::SubdissectorKey>::create_table(&args_next, #table_name, ws_indices.dtable);
                 }
             }
+            Some(Subdissector::DecodeAs(table_name)) => parse_quote! {
+                <() as wsdf::SubdissectorKey>::create_table(args_next.proto_id, #table_name, ws_indices.dtable);
+            },
             Some(Subdissector::Table { table_name, .. }) => {
                 debug_assert!(self.subdissector_key_type.is_some());
                 let key_type = self.subdissector_key_type.as_ref().unwrap();
@@ -1356,7 +1359,32 @@ impl FieldDissectionPlan<'_> {
         let ty = &self.meta.ty;
         let maybe_bytes = self.meta.maybe_bytes();
         match &self.add_strategy {
-            AddStrategy::Subdissect(_) => todo!(),
+            AddStrategy::Subdissect(subd) => {
+                let setup_tvb_next: syn::Stmt = parse_quote! {
+                    let tvb_next = <#ty as wsdf::Subdissect<'tvb>>::setup_tvb_next(&args_next);
+                };
+                let update_args_next: syn::Stmt = parse_quote! {
+                    let args_next = wsdf::DissectorArgs {
+                        tvb: tvb_next,
+                        ..args_next
+                    };
+                };
+                let try_subdissector: Vec<syn::Stmt> = match subd {
+                    Subdissector::DecodeAs(table_name) => parse_quote! {
+                        let offset = offset + <#ty as wsdf::Subdissect<'tvb>>::try_subdissector(&args_next, #table_name, &());
+                    },
+                    Subdissector::Table {
+                        table_name,
+                        fields,
+                        typ,
+                    } => todo!(),
+                };
+                parse_quote! {
+                    #setup_tvb_next
+                    #update_args_next
+                    #(#try_subdissector)*
+                }
+            }
             AddStrategy::ConsumeWith(consume_fn) => {
                 let call_consume_fn: syn::Stmt = parse_quote! {
                     let (n, s) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
