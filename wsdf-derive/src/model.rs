@@ -942,29 +942,13 @@ impl StructInnards {
 
     fn dissect_fields(&self) -> Vec<syn::Stmt> {
         match self {
-            StructInnards::UnitTuple(unit) => {
-                let plan = FieldDissectionPlan::from_unit_tuple(unit);
-                let decl_args_next = unit.decl_dissector_args();
-                let var_name = format_ident!("__inner_value");
-                plan.dissection_steps(&decl_args_next, &var_name)
-            }
+            StructInnards::UnitTuple(unit) => unit.dissect_field(),
             StructInnards::NamedFields { fields } => {
                 let plans = get_field_dissection_plans(fields);
                 fields
                     .iter()
                     .zip(plans)
-                    .flat_map(|(field, plan)| -> Vec<syn::Stmt> {
-                        let decl_prefix_next = field.decl_prefix_next();
-                        let decl_args_next = field.decl_dissector_args();
-                        let var_name = format_ident!("__{}", field.ident);
-
-                        let steps = plan.dissection_steps(&decl_args_next, &var_name);
-
-                        parse_quote! {
-                            #decl_prefix_next
-                            #(#steps)*
-                        }
-                    })
+                    .flat_map(|(field, plan)| field.dissection_steps(&plan))
                     .collect()
             }
         }
@@ -978,6 +962,7 @@ impl StructInnards {
     }
 
     pub(crate) fn add_to_tree_fn(&self, _dissect_options: &ProtocolFieldOptions) -> syn::ItemFn {
+        // @todo: account for _dissect_options
         let dissect_fields = self.dissect_fields();
         let fn_contents: Vec<syn::Stmt> = match self {
             StructInnards::UnitTuple(_) => parse_quote! {
@@ -997,6 +982,35 @@ impl StructInnards {
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
                 #(#fn_contents)*
+            }
+        }
+    }
+
+    pub(crate) fn size_fn(&self) -> syn::ItemFn {
+        let fn_contents: Vec<syn::Stmt> = match self {
+            StructInnards::UnitTuple(unit) => {
+                let mut plan = FieldDissectionPlan::from_unit_tuple(unit);
+                plan.add_strategy = AddStrategy::Hidden;
+                unit.dissect_field_with_plan(&plan)
+            }
+            StructInnards::NamedFields { fields } => {
+                let mut plans = get_field_dissection_plans(fields);
+                for plan in &mut plans {
+                    plan.add_strategy = AddStrategy::Hidden;
+                }
+                fields
+                    .iter()
+                    .zip(plans)
+                    .flat_map(|(field, plan)| field.dissection_steps(&plan))
+                    .collect()
+            }
+        };
+        parse_quote! {
+            fn size(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                let offset = args.offset;
+                let parent = args.parent; // doesn't matter where it points to
+                #(#fn_contents)*
+                offset - args.offset
             }
         }
     }
@@ -1030,7 +1044,7 @@ impl UnitTuple {
         self.0.call_register_func()
     }
 
-    pub(crate) fn decl_dissector_args(&self) -> syn::Stmt {
+    fn decl_dissector_args(&self) -> syn::Stmt {
         let ws_enc = self.0.ws_enc_as_expr();
         parse_quote! {
             let args_next = wsdf::DissectorArgs {
@@ -1050,6 +1064,17 @@ impl UnitTuple {
                 ws_enc: #ws_enc,
             };
         }
+    }
+
+    fn dissect_field(&self) -> Vec<syn::Stmt> {
+        let plan = FieldDissectionPlan::from_unit_tuple(self);
+        self.dissect_field_with_plan(&plan)
+    }
+
+    fn dissect_field_with_plan(&self, plan: &FieldDissectionPlan) -> Vec<syn::Stmt> {
+        let decl_args_next = self.decl_dissector_args();
+        let var_name = format_ident!("__inner_value");
+        plan.dissection_steps(&decl_args_next, &var_name)
     }
 }
 
@@ -1077,6 +1102,19 @@ impl NamedField {
             #decl_prefix
             #decl_args
             #call_register_func
+        }
+    }
+
+    fn dissection_steps(&self, plan: &FieldDissectionPlan) -> Vec<syn::Stmt> {
+        let decl_prefix_next = self.decl_prefix_next();
+        let decl_args_next = self.decl_dissector_args();
+        let var_name = format_ident!("__{}", self.ident);
+
+        let steps = plan.dissection_steps(&decl_args_next, &var_name);
+
+        parse_quote! {
+            #decl_prefix_next
+            #(#steps)*
         }
     }
 
@@ -1384,16 +1422,45 @@ impl FieldDissectionPlan<'_> {
                     #call_add_to_tree
                 }
             }
-            AddStrategy::Hidden => vec![parse_quote! {
-                let offset = offset + <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
-            }],
+            AddStrategy::Hidden => self.handle_hidden(),
             AddStrategy::Default => vec![parse_quote! {
                 let offset = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::add_to_tree(&args_next, fields);
             }],
         }
     }
 
+    fn handle_hidden(&self) -> Vec<syn::Stmt> {
+        let maybe_bytes = self.meta.maybe_bytes();
+        let ty = &self.meta.ty;
+
+        if let Some(consume_fn) = &self.meta.options.consume_with {
+            parse_quote! {
+                // Assume that the context is already created.
+                let (n, _) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
+                let offset = offset + n;
+            }
+        } else if let Some(subd) = &self.meta.options.subdissector {
+            self.try_subdissector_null_proto_root(subd)
+        } else {
+            parse_quote! {
+                let offset = offset + <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
+            }
+        }
+    }
+
     fn try_subdissector(&self, subd: &Subdissector) -> Vec<syn::Stmt> {
+        self.try_subdissector_with_proto_root(subd, &parse_quote!(args.proto_root))
+    }
+
+    fn try_subdissector_null_proto_root(&self, subd: &Subdissector) -> Vec<syn::Stmt> {
+        self.try_subdissector_with_proto_root(subd, &parse_quote! { std::ptr::null_mut() })
+    }
+
+    fn try_subdissector_with_proto_root(
+        &self,
+        subd: &Subdissector,
+        proto_root: &syn::Expr,
+    ) -> Vec<syn::Stmt> {
         let ty = &self.meta.ty;
 
         let setup_tvb_next: syn::Stmt = parse_quote! {
@@ -1402,6 +1469,7 @@ impl FieldDissectionPlan<'_> {
         let update_args_next: syn::Stmt = parse_quote! {
             let args_next = wsdf::DissectorArgs {
                 tvb: tvb_next,
+                proto_root: #proto_root,
                 ..args_next
             };
         };

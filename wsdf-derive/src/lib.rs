@@ -398,17 +398,17 @@ fn derive_dissect_impl_struct(
     dissect_options: &ProtocolFieldOptions,
     struct_info: &StructInnards,
 ) -> syn::ItemImpl {
-    let fn_add_to_tree = struct_info.add_to_tree_fn(dissect_options);
-    let fn_register = struct_info.register_fn();
     let maybe_bytes = struct_info.maybe_bytes();
+
+    let fn_add_to_tree = struct_info.add_to_tree_fn(dissect_options);
+    let fn_size = struct_info.size_fn();
+    let fn_register = struct_info.register_fn();
 
     parse_quote! {
         impl<'tvb> wsdf::Dissect<'tvb, #maybe_bytes> for #ident {
             type Emit = ();
             #fn_add_to_tree
-            fn size(args: &wsdf::DissectorArgs, fields: &mut wsdf::FieldsStore) -> usize {
-                todo!()
-            }
+            #fn_size
             #fn_register
             fn emit(_args: &wsdf::DissectorArgs) {}
         }
