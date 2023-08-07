@@ -440,8 +440,17 @@ pub(crate) fn get_wsdf_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
     get_attrs(attrs, "wsdf")
 }
 
-/// Extracts the doc comment from an attribute, if any.
-pub(crate) fn get_docs(attr: &syn::Attribute) -> Option<String> {
+pub(crate) fn get_docs(attrs: &[syn::Attribute]) -> Option<String> {
+    let docs = attrs.iter().filter_map(get_doc).collect::<String>();
+    if docs.is_empty() {
+        None
+    } else {
+        Some(docs)
+    }
+}
+
+/// Extracts the doc comment contents from an attribute, if any.
+fn get_doc(attr: &syn::Attribute) -> Option<String> {
     match attr.meta {
         syn::Meta::NameValue(ref nv) => {
             if nv.path.segments.len() == 1 && nv.path.segments.last().unwrap().ident == *"doc" {
@@ -473,7 +482,7 @@ mod test_attribute_parsing {
     #[test]
     fn get_docs_works() {
         let attr: syn::Attribute = parse_quote! { #[doc = "foo"] };
-        assert_eq!(get_docs(&attr), Some("foo".to_string()));
+        assert_eq!(get_docs(&[attr]), Some("foo".to_string()));
     }
 }
 

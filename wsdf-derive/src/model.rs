@@ -827,7 +827,7 @@ impl ProtoField<'_> {
         root: &DataRoot,
         field_name: &Option<String>,
     ) -> proc_macro2::TokenStream {
-        let docs = self.field.attrs.iter().find_map(get_docs);
+        let docs = get_docs(&self.field.attrs);
         let field_name = field_name.clone().unwrap_or_else(|| self.name());
 
         let call_subroutine = self.typ.register_user_type(&field_name, &docs);
@@ -896,7 +896,7 @@ impl StructInnards {
         for field in &fields.named {
             let ident = field.ident.clone().unwrap(); // safe since the fields are named
             let options = init_options::<FieldOptions>(&field.attrs)?;
-            let docs = field.attrs.iter().find_map(get_docs);
+            let docs = get_docs(&field.attrs);
             let meta = FieldMeta {
                 ty: field.ty.clone(),
                 docs,
@@ -916,7 +916,7 @@ impl StructInnards {
         }
         let field = fields.unnamed.last().unwrap(); // safe since we checked there's exactly one
         let options = init_options::<FieldOptions>(&field.attrs)?;
-        let docs = field.attrs.iter().find_map(get_docs);
+        let docs = get_docs(&field.attrs);
         Ok(StructInnards::UnitTuple(UnitTuple(FieldMeta {
             ty: field.ty.clone(),
             docs,
