@@ -375,9 +375,9 @@ pub fn derive_dissect(input: TokenStream) -> TokenStream {
 }
 
 fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
+    let dissect_options = init_options::<ProtocolFieldOptions>(&input.attrs)?;
     match &input.data {
         syn::Data::Struct(data) => {
-            let dissect_options = init_options::<ProtocolFieldOptions>(&input.attrs).unwrap();
             let struct_info = StructInnards::from_fields(&data.fields)?;
             Ok(derive_dissect_impl_struct(
                 &input.ident,
