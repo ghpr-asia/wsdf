@@ -848,6 +848,13 @@ pub mod tap {
     {
         handler.call(ctx)
     }
+
+    pub fn handle_get_variant<'a, Args, H>(ctx: &Context<'a, ()>, handler: H) -> &'static str
+    where
+        H: Handler<'a, (), Args, &'static str>,
+    {
+        handler.call(ctx)
+    }
 }
 
 pub type FieldsMap<T> = HashMap<String, Vec<T>>;
@@ -992,7 +999,7 @@ pub struct DissectorArgs<'a, 'tvb> {
     pub parent: *mut epan_sys::proto_tree,
 
     /// A dispatch index, iff the field is an enum.
-    pub dispatch: Option<usize>,
+    pub variant: Option<&'static str>,
 
     /// The length of the field, iff the field is a list with length determined at runtime.
     pub list_len: Option<usize>,

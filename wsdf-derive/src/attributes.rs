@@ -57,6 +57,7 @@ pub(crate) struct FieldOptions {
     /// For enum fields only. An identifier for a previous field which is used to determine the
     /// variant to decode as.
     pub(crate) dispatch: Option<syn::Ident>,
+    pub(crate) get_variant: Option<syn::Path>,
     pub(crate) taps: Vec<syn::Path>,
     /// Path to a custom function to decode this field.
     pub(crate) decode_with: Option<syn::Path>,
@@ -276,6 +277,11 @@ impl OptionBuilder for FieldOptions {
                         let dispatch = get_lit_str(&nv.value)?.value();
                         self.dispatch = Some(format_ident!("{}", dispatch));
                     }
+                    META_GET_VARIANT => {
+                        let get_variant = get_lit_str(&nv.value)?.value();
+                        let path = syn::parse_str::<syn::Path>(&get_variant)?;
+                        self.get_variant = Some(path);
+                    }
                     META_DECODE_WITH => {
                         let decode_with = get_lit_str(&nv.value)?.value();
                         self.decode_with = Some(syn::parse_str::<syn::Path>(&decode_with)?);
@@ -393,6 +399,7 @@ const META_WS_TYPE: &str = "typ";
 const META_WS_ENC: &str = "enc";
 const META_WS_DISPLAY: &str = "display";
 const META_DISPATCH: &str = "dispatch_field";
+const META_GET_VARIANT: &str = "get_variant";
 const META_DECODE_WITH: &str = "decode_with";
 const META_TAP: &str = "tap";
 const META_CONSUME_WITH: &str = "consume_with";

@@ -1062,8 +1062,8 @@ impl UnitTuple {
                 prefix: args.prefix,
                 offset: args.offset,
                 parent: args.parent,
-                dispatch: None,
-                list_len: None,
+                variant: std::option::Option::None,
+                list_len: std::option::Option::None,
                 ws_enc: #ws_enc,
             };
         }
@@ -1129,7 +1129,7 @@ impl NamedField {
     }
 
     fn decl_dissector_args(&self) -> syn::Stmt {
-        let dispatch = self.meta.dispatch_as_expr();
+        let variant = self.meta.get_variant_as_expr();
         let list_len = self.meta.size_hint_as_expr();
         let ws_enc = self.meta.ws_enc_as_expr();
 
@@ -1146,7 +1146,7 @@ impl NamedField {
                 prefix: &prefix_next,
                 offset,
                 parent,
-                dispatch: #dispatch,
+                variant: #variant,
                 list_len: #list_len,
                 ws_enc: #ws_enc,
             };
@@ -1180,6 +1180,10 @@ impl FieldMeta {
 
     fn size_hint_as_expr(&self) -> syn::Expr {
         self.options.size_hint_as_expr()
+    }
+
+    fn get_variant_as_expr(&self) -> syn::Expr {
+        self.options.get_variant_as_expr()
     }
 
     fn maybe_bytes(&self) -> syn::Type {
@@ -1273,6 +1277,24 @@ impl FieldOptions {
         }
     }
 
+    fn get_variant_as_expr(&self) -> syn::Expr {
+        match &self.get_variant {
+            Some(get_variant) => parse_quote! {
+                std::option::Option::Some(
+                    wsdf::tap::handle_get_variant(&wsdf::tap::Context {
+                        field: (),
+                        fields,
+                        pinfo: args.pinfo,
+                        packet: args.data,
+                        offset,
+                    },
+                    #get_variant,
+                ))
+            },
+            None => parse_quote! { std::option::Option::None },
+        }
+    }
+
     pub(crate) fn maybe_bytes(&self) -> syn::Type {
         match self.bytes {
             Some(true) => parse_quote! { [u8] },
@@ -1320,7 +1342,9 @@ impl AddStrategy {
 impl<'a> FieldDissectionPlan<'a> {
     fn from_unit_tuple(unit: &'a UnitTuple) -> Self {
         let options = &unit.0.options;
-        let emit = !options.taps.is_empty() || options.consume_with.is_some();
+        let emit = !options.taps.is_empty()
+            || options.consume_with.is_some()
+            || options.get_variant.is_some();
         let save = options.save == Some(true);
         let build_ctx = emit;
         let add_strategy = AddStrategy::from_field_options(options);
@@ -1549,7 +1573,10 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
     let mut fields_to_emit = HashSet::new();
     for field in fields {
         let options = &field.meta.options;
-        if !options.taps.is_empty() || options.consume_with.is_some() {
+        if !options.taps.is_empty()
+            || options.consume_with.is_some()
+            || options.get_variant.is_some()
+        {
             fields_to_emit.insert(&field.ident);
         }
         if let Some(Subdissector::Table { fields, .. }) = &options.subdissector {
@@ -1571,7 +1598,9 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
             let options = &field.meta.options;
 
             let save = options.save == Some(true);
-            let build_ctx = !options.taps.is_empty() || options.consume_with.is_some();
+            let build_ctx = !options.taps.is_empty()
+                || options.consume_with.is_some()
+                || options.get_variant.is_some();
             let add_strategy = AddStrategy::from_field_options(options);
 
             FieldDissectionPlan {
