@@ -1191,7 +1191,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
 
     /// Returns the number of bytes this field occupies in the packet.    
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize;
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
 
     /// Registers the field. It is the responsibility of the implementor to save the hf index
     /// and possibly the ett index into the two maps.
@@ -1303,7 +1303,7 @@ where
         <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         <T as Dissect<'tvb, MaybeBytes>>::size(args, fields)
     }
 
@@ -1899,7 +1899,7 @@ impl<'tvb> Dissect<'tvb, [u8]> for &[u8] {
         <Vec<u8> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         <Vec<u8> as Dissect<'tvb, [u8]>>::size(args, fields)
     }
 
@@ -1943,10 +1943,10 @@ where
         offset
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
         for _ in 0..args.list_len.unwrap() {
-            size += <T as Dissect<()>>::size(args, fields);
+            size += <T as Dissect<'tvb, ()>>::size(args, fields);
         }
         size
     }
@@ -1972,10 +1972,10 @@ where
         offset
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
         for _ in 0..args.list_len.unwrap() {
-            size += <T as Dissect<[u8]>>::size(args, fields);
+            size += <T as Dissect<'tvb, [u8]>>::size(args, fields);
         }
         size
     }
@@ -2001,10 +2001,10 @@ where
         offset
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
         for _ in 0..N {
-            size += <T as Dissect<()>>::size(args, fields);
+            size += <T as Dissect<'tvb, ()>>::size(args, fields);
         }
         size
     }
@@ -2030,10 +2030,10 @@ where
         offset
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
         for _ in 0..N {
-            size += <T as Dissect<[u8]>>::size(args, fields);
+            size += <T as Dissect<'tvb, [u8]>>::size(args, fields);
         }
         size
     }
@@ -2056,7 +2056,7 @@ where
         <Vec<T> as Dissect<'tvb, ()>>::add_to_tree(args, fields)
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         <Vec<T> as Dissect<()>>::size(args, fields)
     }
 
@@ -2077,7 +2077,7 @@ where
         <Vec<T> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
     }
 
-    fn size(args: &DissectorArgs, fields: &mut FieldsStore) -> usize {
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         <Vec<T> as Dissect<[u8]>>::size(args, fields)
     }
 
