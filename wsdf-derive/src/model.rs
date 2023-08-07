@@ -1242,6 +1242,7 @@ impl FieldOptions {
 
 pub(crate) struct FieldDissectionPlan<'a> {
     emit: bool,
+    save: bool,
     build_ctx: bool,
     taps: &'a [syn::Path],
     add_strategy: AddStrategy,
@@ -1279,11 +1280,13 @@ impl<'a> FieldDissectionPlan<'a> {
     fn from_unit_tuple(unit: &'a UnitTuple) -> Self {
         let options = &unit.0.options;
         let emit = !options.taps.is_empty() || options.consume_with.is_some();
+        let save = options.save == Some(true);
         let build_ctx = emit;
         let add_strategy = AddStrategy::from_field_options(options);
 
         Self {
             emit,
+            save,
             build_ctx,
             taps: &options.taps,
             add_strategy,
@@ -1299,14 +1302,15 @@ impl FieldDissectionPlan<'_> {
         field_var_name: &syn::Ident,
     ) -> Vec<syn::Stmt> {
         let emit_and_assign = self.emit_and_assign(field_var_name);
+        let save_field = self.save_field();
         let build_tap_ctx = self.build_tap_ctx(field_var_name);
         let call_taps = self.call_taps();
         let exec_add_strategy = self.exec_add_strategy();
 
-        // @todo: account for #[wsdf(save)]
         parse_quote! {
             #decl_args_next
             #emit_and_assign
+            #save_field
             #build_tap_ctx
             #(#call_taps)*
             #(#exec_add_strategy)*
@@ -1322,6 +1326,17 @@ impl FieldDissectionPlan<'_> {
         Some(parse_quote! {
             let #var_name = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::emit(&args_next);
 
+        })
+    }
+
+    fn save_field(&self) -> Option<syn::Stmt> {
+        if !self.save {
+            return None;
+        }
+        let ty = &self.meta.ty;
+        let maybe_bytes = self.meta.maybe_bytes();
+        Some(parse_quote! {
+            <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::save(&args_next, fields);
         })
     }
 
@@ -1484,11 +1499,13 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
         .map(|field| {
             let options = &field.meta.options;
 
+            let save = options.save == Some(true);
             let build_ctx = !options.taps.is_empty() || options.consume_with.is_some();
             let add_strategy = AddStrategy::from_field_options(options);
 
             FieldDissectionPlan {
                 emit: fields_to_emit.contains(&field.ident),
+                save,
                 build_ctx,
                 taps: &options.taps,
                 add_strategy,
