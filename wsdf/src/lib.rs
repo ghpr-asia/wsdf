@@ -1030,7 +1030,7 @@ pub struct HfIndices(HashMap<String, c_int>);
 pub struct EttIndices(HashMap<String, c_int>);
 
 #[derive(Default)]
-pub struct DissectorTables(HashMap<&'static str, c_int>);
+pub struct DissectorTables(HashMap<&'static str, *mut epan_sys::dissector_table>);
 
 impl HfIndices {
     /// Creates a hf index for the current prefix as a text node. Intended for subtree roots with
@@ -1085,6 +1085,59 @@ impl EttIndices {
 
     pub fn get(&self, prefix: &str) -> Option<c_int> {
         self.0.get(prefix).copied()
+    }
+}
+
+impl DissectorTables {
+    /// Tries to retrieve the pointer to a Decode As dissector table. If it is not found, registers
+    /// one with Wireshark.
+    pub fn get_or_create_decode_as(
+        &mut self,
+        proto_id: c_int,
+        name: &'static str,
+    ) -> *mut epan_sys::dissector_table {
+        if self.0.contains_key(&name) {
+            return self.0[&name];
+        }
+        let name_cstr = CString::new(name).unwrap();
+        let table_ptr = unsafe {
+            epan_sys::register_decode_as_next_proto(
+                proto_id,
+                name_cstr.as_ptr(),
+                name_cstr.as_ptr(),
+                None,
+            )
+        };
+        self.0.insert(name, table_ptr);
+        table_ptr
+    }
+
+    pub fn get_or_create_integer_table(
+        &mut self,
+        proto_id: c_int,
+        name: &'static str,
+        ws_type: c_uint,
+        ws_display: c_int,
+    ) -> *mut epan_sys::dissector_table {
+        if self.0.contains_key(&name) {
+            return self.0[&name];
+        }
+        let name_cstr = CString::new(name).unwrap();
+        let table_ptr = unsafe {
+            epan_sys::register_dissector_table(
+                name_cstr.as_ptr(),
+                name_cstr.as_ptr(),
+                proto_id,
+                ws_type,
+                ws_display,
+            )
+        };
+        self.0.insert(name, table_ptr);
+        table_ptr
+    }
+
+    pub fn get(&self, name: &'static str) -> Option<*mut epan_sys::dissector_table> {
+        self.0.get(name).copied()
     }
 }
 
@@ -1157,8 +1210,57 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
     fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>);
 }
 
+pub trait SubdissectorKey {
+    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables);
+
+    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize;
+}
+
 pub trait Subdissect {
-    fn subdissect(args: &DissectorArgs) -> usize;
+    fn subdissect(args: &DissectorArgs, name: &'static str, key: &impl SubdissectorKey) -> usize {
+        key.try_subdissector(args, name)
+    }
+}
+
+impl Subdissect for Vec<u8> {}
+impl<const N: usize> Subdissect for [u8; N] {}
+impl Subdissect for &[u8] {}
+
+fn dissector_try_uint(args: &DissectorArgs, name: &'static str, value: u32) -> usize {
+    let subdissector = args.dtables.get(name).unwrap();
+    unsafe {
+        epan_sys::dissector_try_uint(subdissector, value, args.tvb, args.pinfo, args.proto_root)
+            as _
+    }
+}
+
+impl SubdissectorKey for () {
+    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
+        dtables.get_or_create_decode_as(proto_id, name);
+    }
+
+    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
+        let subdissector = args.dtables.get(name).unwrap();
+        unsafe {
+            epan_sys::dissector_try_payload(subdissector, args.tvb, args.pinfo, args.proto_root)
+                as _
+        }
+    }
+}
+
+impl SubdissectorKey for u16 {
+    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
+        dtables.get_or_create_integer_table(
+            proto_id,
+            name,
+            epan_sys::ftenum_FT_UINT16,
+            epan_sys::field_display_e_BASE_DEC as _,
+        );
+    }
+
+    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
+        dissector_try_uint(args, name, *self as _)
+    }
 }
 
 impl<'tvb, MaybeBytes: ?Sized, T> Dissect<'tvb, MaybeBytes> for (T,)
@@ -1916,24 +2018,6 @@ where
     }
 
     fn emit(_args: &DissectorArgs) -> Self::Emit {}
-}
-
-impl Subdissect for Vec<u8> {
-    fn subdissect(args: &DissectorArgs) -> usize {
-        todo!()
-    }
-}
-
-impl<const N: usize> Subdissect for [u8; N] {
-    fn subdissect(args: &DissectorArgs) -> usize {
-        todo!()
-    }
-}
-
-impl Subdissect for &[u8] {
-    fn subdissect(args: &DissectorArgs) -> usize {
-        todo!()
-    }
 }
 
 #[cfg(test)]
