@@ -750,6 +750,7 @@ impl DataTerminal<'_> {
             fn #fn_ident<'a>(#DISSECTION_PARAMS) -> std::ffi::c_int {
                 #update_parent
                 let mut #WSDF_OFFSET = 0;
+                let mut fields_local = wsdf::FieldsStore::default();
 
                 #pre_dissect
 
@@ -977,6 +978,7 @@ impl StructInnards {
         };
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                let mut fields_local = wsdf::FieldsStore::default();
                 #(#fn_contents)*
             }
         }
@@ -1003,6 +1005,7 @@ impl StructInnards {
         };
         parse_quote! {
             fn size(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                let mut fields_local = wsdf::FieldsStore::default();
                 let offset = args.offset;
                 let parent = args.parent; // doesn't matter where it points to
                 #(#fn_contents)*
@@ -1053,6 +1056,7 @@ impl UnitTuple {
                 data: args.data,
 
                 prefix: args.prefix,
+                prefix_local: args.prefix_local,
                 offset: args.offset,
                 parent: args.parent,
                 variant: std::option::Option::None,
@@ -1125,6 +1129,7 @@ impl NamedField {
         let variant = self.meta.get_variant_as_expr();
         let list_len = self.meta.size_hint_as_expr();
         let ws_enc = self.meta.ws_enc_as_expr();
+        let field_ident = self.ident.to_string();
 
         parse_quote! {
             let args_next = wsdf::DissectorArgs {
@@ -1137,6 +1142,7 @@ impl NamedField {
                 data: args.data,
 
                 prefix: &prefix_next,
+                prefix_local: #field_ident,
                 offset,
                 parent,
                 variant: #variant,
@@ -1263,6 +1269,7 @@ impl FieldOptions {
                     wsdf::tap::handle_get_variant(&wsdf::tap::Context {
                         field: (),
                         fields,
+                        fields_local: &fields_local,
                         pinfo: args.pinfo,
                         packet: args.data,
                         offset,
@@ -1274,7 +1281,7 @@ impl FieldOptions {
         }
     }
 
-    pub(crate) fn maybe_bytes(&self) -> syn::Type {
+    fn maybe_bytes(&self) -> syn::Type {
         match self.bytes {
             Some(true) => parse_quote! { [u8] },
             Some(false) | None => parse_quote! { () },
@@ -1619,7 +1626,8 @@ impl<'a> Enum<'a> {
         }
     }
 
-    fn decl_dissector_args() -> syn::Stmt {
+    fn decl_dissector_args(variant: &syn::Variant) -> syn::Stmt {
+        let variant_snake_case = variant.ident.to_wsdf_snake_case();
         parse_quote! {
             let args_next = wsdf::DissectorArgs {
                 hf_indices: args.hf_indices,
@@ -1631,6 +1639,7 @@ impl<'a> Enum<'a> {
                 data: args.data,
 
                 prefix: &prefix_next,
+                prefix_local: #variant_snake_case,
                 offset: args.offset,
                 parent: args.parent,
                 variant: std::option::Option::None,
@@ -1644,6 +1653,7 @@ impl<'a> Enum<'a> {
         let inner = self.match_and_call_on_variant(&parse_quote!(add_to_tree));
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                let mut fields_local = wsdf::FieldsStore::default();
                 #(#inner)*
             }
         }
@@ -1653,6 +1663,7 @@ impl<'a> Enum<'a> {
         let inner = self.match_and_call_on_variant(&parse_quote!(size));
         parse_quote! {
             fn size(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                let mut fields_local = wsdf::FieldsStore::default();
                 #(#inner)*
             }
         }

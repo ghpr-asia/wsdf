@@ -722,6 +722,7 @@ pub mod tap {
     pub struct Context<'a, T: Clone> {
         pub field: T,
         pub fields: &'a FieldsStore<'a>,
+        pub fields_local: &'a FieldsStore<'a>,
         pub pinfo: *mut epan_sys::_packet_info,
         pub packet: &'a [u8],
         pub offset: usize,
@@ -749,6 +750,7 @@ pub mod tap {
     /// A key value store of previous fields encountered and saved. Each key is the Wireshark
     /// filter for that field.
     pub struct Fields<'a>(pub &'a FieldsStore<'a>);
+    pub struct FieldsLocal<'a>(pub &'a FieldsStore<'a>);
     /// The nanosecond timestamp recorded in the packet capture data.
     pub struct PacketNanos(pub i64);
     /// Raw bytes of the packet.
@@ -775,6 +777,12 @@ pub mod tap {
     impl<'a, T: Clone> FromContext<'a, T> for Fields<'a> {
         fn from_ctx(ctx: &Context<'a, T>) -> Self {
             Self(ctx.fields)
+        }
+    }
+
+    impl<'a, T: Clone> FromContext<'a, T> for FieldsLocal<'a> {
+        fn from_ctx(ctx: &Context<'a, T>) -> Self {
+            Self(ctx.fields_local)
         }
     }
 
@@ -816,6 +824,7 @@ pub mod tap {
     impl_handler!(Arg1, Arg2, Arg3);
     impl_handler!(Arg1, Arg2, Arg3, Arg4);
     impl_handler!(Arg1, Arg2, Arg3, Arg4, Arg5);
+    impl_handler!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6);
 
     #[doc(hidden)]
     pub fn handle_tap<'a, T, Args, H>(ctx: &Context<'a, T>, handler: H)
@@ -992,6 +1001,9 @@ pub struct DissectorArgs<'a, 'tvb> {
     /// Wireshark filter string for the next expected field.
     pub prefix: &'a str,
 
+    /// Last segment of the prefix, corresponding to the field's portion.
+    pub prefix_local: &'a str,
+
     /// Offset at which the next field is expected.
     pub offset: usize,
 
@@ -1068,7 +1080,7 @@ impl HfIndices {
         self.0.get(prefix).copied()
     }
 
-    fn insert(&mut self, prefix: &str, idx: c_int) -> Option<c_int> {
+    pub fn insert(&mut self, prefix: &str, idx: c_int) -> Option<c_int> {
         self.0.insert(prefix.to_string(), idx)
     }
 }
@@ -1218,7 +1230,12 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
     ) -> usize;
 
     /// Saves the field into the fields store.
-    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>);
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a;
 }
 
 pub trait SubdissectorKey {
@@ -1335,8 +1352,14 @@ where
         <T as Primitive<'tvb, MaybeBytes>>::add_to_tree_format_value(args, s, nr_bytes)
     }
 
-    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
-        <T as Primitive<'tvb, MaybeBytes>>::save(args, store);
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
+        <T as Primitive<'tvb, MaybeBytes>>::save(args, gstore, lstore);
     }
 }
 
@@ -1471,7 +1494,7 @@ impl Dissect<'_, ()> for () {
     fn emit(_args: &DissectorArgs) {}
 }
 
-impl Primitive<'_, ()> for () {
+impl<'tvb> Primitive<'tvb, ()> for () {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1495,7 +1518,10 @@ impl Primitive<'_, ()> for () {
         args.offset + nr_bytes
     }
 
-    fn save(_args: &DissectorArgs, _store: &mut FieldsStore) {
+    fn save<'a>(_args: &DissectorArgs, _gstore: &mut FieldsStore, _lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         // nop
     }
 }
@@ -1523,7 +1549,7 @@ impl Dissect<'_, ()> for u8 {
     }
 }
 
-impl Primitive<'_, ()> for u8 {
+impl<'tvb> Primitive<'tvb, ()> for u8 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1535,9 +1561,13 @@ impl Primitive<'_, ()> for u8 {
         add_to_tree_format_value_uint(args, 1, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_u8(args.prefix, value);
+        gstore.insert_u8(args.prefix, value);
+        lstore.insert_u8(args.prefix_local, value);
     }
 }
 
@@ -1564,7 +1594,7 @@ impl Dissect<'_, ()> for u16 {
     }
 }
 
-impl Primitive<'_, ()> for u16 {
+impl<'tvb> Primitive<'tvb, ()> for u16 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1576,9 +1606,13 @@ impl Primitive<'_, ()> for u16 {
         add_to_tree_format_value_uint(args, 2, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_u16(args.prefix, value);
+        gstore.insert_u16(args.prefix, value);
+        lstore.insert_u16(args.prefix_local, value);
     }
 }
 
@@ -1605,7 +1639,7 @@ impl Dissect<'_, ()> for u32 {
     }
 }
 
-impl Primitive<'_, ()> for u32 {
+impl<'tvb> Primitive<'tvb, ()> for u32 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1617,9 +1651,13 @@ impl Primitive<'_, ()> for u32 {
         add_to_tree_format_value_uint(args, 4, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_u32(args.prefix, value);
+        gstore.insert_u32(args.prefix, value);
+        lstore.insert_u32(args.prefix_local, value);
     }
 }
 
@@ -1646,7 +1684,7 @@ impl Dissect<'_, ()> for u64 {
     }
 }
 
-impl Primitive<'_, ()> for u64 {
+impl<'tvb> Primitive<'tvb, ()> for u64 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1658,9 +1696,13 @@ impl Primitive<'_, ()> for u64 {
         add_to_tree_format_value_uint(args, 8, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_u64(args.prefix, value);
+        gstore.insert_u64(args.prefix, value);
+        lstore.insert_u64(args.prefix_local, value);
     }
 }
 
@@ -1687,7 +1729,7 @@ impl Dissect<'_, ()> for i8 {
     }
 }
 
-impl Primitive<'_, ()> for i8 {
+impl<'tvb> Primitive<'tvb, ()> for i8 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1699,9 +1741,13 @@ impl Primitive<'_, ()> for i8 {
         add_to_tree_format_value_int(args, 1, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_i8(args.prefix, value);
+        gstore.insert_i8(args.prefix, value);
+        lstore.insert_i8(args.prefix_local, value);
     }
 }
 
@@ -1729,7 +1775,7 @@ impl Dissect<'_, ()> for i16 {
     }
 }
 
-impl Primitive<'_, ()> for i16 {
+impl<'tvb> Primitive<'tvb, ()> for i16 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1740,9 +1786,13 @@ impl Primitive<'_, ()> for i16 {
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
         add_to_tree_format_value_int(args, 2, value, s)
     }
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_i16(args.prefix, value);
+        gstore.insert_i16(args.prefix, value);
+        lstore.insert_i16(args.prefix_local, value);
     }
 }
 
@@ -1770,7 +1820,7 @@ impl Dissect<'_, ()> for i32 {
     }
 }
 
-impl Primitive<'_, ()> for i32 {
+impl<'tvb> Primitive<'tvb, ()> for i32 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1782,9 +1832,13 @@ impl Primitive<'_, ()> for i32 {
         add_to_tree_format_value_int(args, 4, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_i32(args.prefix, value);
+        gstore.insert_i32(args.prefix, value);
+        lstore.insert_i32(args.prefix_local, value);
     }
 }
 
@@ -1812,7 +1866,7 @@ impl Dissect<'_, ()> for i64 {
     }
 }
 
-impl Primitive<'_, ()> for i64 {
+impl<'tvb> Primitive<'tvb, ()> for i64 {
     fn add_to_tree_format_value(
         args: &DissectorArgs,
         s: &impl std::fmt::Display,
@@ -1824,9 +1878,13 @@ impl Primitive<'_, ()> for i64 {
         add_to_tree_format_value_int(args, 8, value, s)
     }
 
-    fn save(args: &DissectorArgs<'_, '_>, store: &mut FieldsStore<'_>) {
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'_, ()>>::emit(args);
-        store.insert_i64(args.prefix, value);
+        gstore.insert_i64(args.prefix, value);
+        lstore.insert_i64(args.prefix_local, value);
     }
 }
 
@@ -1900,9 +1958,16 @@ impl<'tvb, const N: usize> Primitive<'tvb, [u8]> for [u8; N] {
         add_to_tree_format_value_bytes(args, nr_bytes, s)
     }
 
-    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
-        store.insert_bytes(args.prefix, value);
+        gstore.insert_bytes(args.prefix, value);
+        lstore.insert_bytes(args.prefix_local, value);
     }
 }
 
@@ -1945,9 +2010,16 @@ impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
         add_to_tree_format_value_bytes(args, nr_bytes, s)
     }
 
-    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
-        store.insert_bytes(args.prefix, value);
+        gstore.insert_bytes(args.prefix, value);
+        lstore.insert_bytes(args.prefix_local, value);
     }
 }
 
@@ -1982,9 +2054,16 @@ impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
         add_to_tree_format_value_bytes(args, nr_bytes, s)
     }
 
-    fn save(args: &DissectorArgs<'_, 'tvb>, store: &mut FieldsStore<'tvb>) {
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
         let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
-        store.insert_bytes(args.prefix, value);
+        gstore.insert_bytes(args.prefix, value);
+        lstore.insert_bytes(args.prefix_local, value);
     }
 }
 
