@@ -1441,6 +1441,58 @@ fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: 
 const DEFAULT_INT_ENCODING: u32 = epan_sys::BIG_ENDIAN;
 const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
 
+impl Dissect<'_, ()> for () {
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 0, epan_sys::ENC_NA)
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        0
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        let hf_index = register_hf_index(
+            args,
+            epan_sys::field_display_e_BASE_NONE as _,
+            epan_sys::ftenum_FT_NONE,
+        );
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(_args: &DissectorArgs) {}
+}
+
+impl Primitive<'_, ()> for () {
+    fn add_to_tree_format_value(
+        args: &DissectorArgs,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) -> usize {
+        let hf_index = args.get_hf_index().unwrap();
+        let field_name = unsafe { epan_sys::proto_registrar_get_name(hf_index) };
+        let fmt = CString::new(s.to_string()).unwrap();
+        unsafe {
+            epan_sys::proto_tree_add_none_format(
+                args.parent,
+                hf_index,
+                args.tvb,
+                args.offset as _,
+                nr_bytes as _,
+                "%s: %s\0".as_ptr() as *const c_char,
+                field_name,
+                fmt.as_ptr(),
+            );
+        }
+        args.offset + nr_bytes
+    }
+
+    fn save(_args: &DissectorArgs, _store: &mut FieldsStore) {
+        // nop
+    }
+}
+
 impl Dissect<'_, ()> for u8 {
     type Emit = u8;
 

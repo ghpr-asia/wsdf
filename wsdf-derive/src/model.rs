@@ -882,7 +882,12 @@ impl StructInnards {
         match fields {
             syn::Fields::Named(fields) => Self::from_fields_named(fields),
             syn::Fields::Unnamed(fields) => Self::from_fields_unnamed(fields),
-            syn::Fields::Unit => make_err(fields, "expected at least one field"),
+            syn::Fields::Unit => Ok(StructInnards::UnitTuple(UnitTuple(FieldMeta {
+                ty: parse_quote! { () },
+                docs: None,
+                options: FieldOptions::default(),
+                subdissector_key_type: None,
+            }))),
         }
     }
 
@@ -970,14 +975,12 @@ impl StructInnards {
                 #(#dissect_fields)*
                 offset
             },
-            StructInnards::NamedFields { .. } => {
-                parse_quote! {
-                    let offset = args.offset;
-                    let parent = args.add_subtree();
-                    #(#dissect_fields)*
-                    offset
-                }
-            }
+            StructInnards::NamedFields { .. } => parse_quote! {
+                let offset = args.offset;
+                let parent = args.add_subtree();
+                #(#dissect_fields)*
+                offset
+            },
         };
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
