@@ -717,7 +717,7 @@ pub mod tap {
     use crate::FieldsStore;
 
     /// A context holding packet information we might care about. *Meant for internal use*.
-    #[derive(Clone)]
+    #[derive(Clone, Copy)]
     #[doc(hidden)]
     pub struct Context<'a, T: Clone> {
         pub field: T,
