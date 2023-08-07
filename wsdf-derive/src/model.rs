@@ -1290,6 +1290,13 @@ impl FieldOptions {
             Some(false) | None => parse_quote! { () },
         }
     }
+
+    fn requires_ctx(&self) -> bool {
+        !self.taps.is_empty()
+            || self.consume_with.is_some()
+            || self.decode_with.is_some()
+            || self.get_variant.is_some()
+    }
 }
 
 pub(crate) struct FieldDissectionPlan<'a> {
@@ -1331,11 +1338,9 @@ impl AddStrategy {
 impl<'a> FieldDissectionPlan<'a> {
     fn from_unit_tuple(unit: &'a UnitTuple) -> Self {
         let options = &unit.0.options;
-        let emit = !options.taps.is_empty()
-            || options.consume_with.is_some()
-            || options.get_variant.is_some();
         let save = options.save == Some(true);
-        let build_ctx = emit;
+        let build_ctx = options.requires_ctx();
+        let emit = build_ctx;
         let add_strategy = AddStrategy::from_field_options(options);
 
         Self {
@@ -1562,10 +1567,7 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
     let mut fields_to_emit = HashSet::new();
     for field in fields {
         let options = &field.meta.options;
-        if !options.taps.is_empty()
-            || options.consume_with.is_some()
-            || options.get_variant.is_some()
-        {
+        if options.requires_ctx() {
             fields_to_emit.insert(&field.ident);
         }
         if let Some(Subdissector::Table { fields, .. }) = &options.subdissector {
@@ -1587,9 +1589,7 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
             let options = &field.meta.options;
 
             let save = options.save == Some(true);
-            let build_ctx = !options.taps.is_empty()
-                || options.consume_with.is_some()
-                || options.get_variant.is_some();
+            let build_ctx = options.requires_ctx();
             let add_strategy = AddStrategy::from_field_options(options);
 
             FieldDissectionPlan {
