@@ -469,6 +469,26 @@ fn get_doc(attr: &syn::Attribute) -> Option<String> {
     }
 }
 
+/// Given a list of attributes, checks the name = value meta items and takes all the values which
+/// match the provided meta name.
+pub(crate) fn filter_for_meta_value(
+    attrs: &[syn::Attribute],
+    meta_name: &str,
+) -> syn::Result<Vec<syn::Expr>> {
+    let meta_items = get_meta_items(get_wsdf_attrs(attrs).as_slice())?;
+    let ret = meta_items.into_iter().filter_map(|meta| {
+        if let syn::Meta::NameValue(nv) = meta {
+            if let Some(ident) = nv.path.get_ident() {
+                if ident.to_string().as_str() == meta_name {
+                    return Some(nv.value);
+                }
+            }
+        }
+        None
+    });
+    Ok(ret.collect())
+}
+
 #[cfg(test)]
 mod test_attribute_parsing {
     use super::*;
