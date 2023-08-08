@@ -1038,8 +1038,28 @@ impl StructInnards {
 
 impl UnitTuple {
     fn decl_register_args(&self) -> syn::Stmt {
-        self.0
-            .decl_register_args(&parse_quote!(args.name), &parse_quote!(args.prefix))
+        let blurb = self.blurb_expr();
+        let ws_type = self.0.ws_type_as_expr();
+        let ws_display = self.0.ws_display_as_expr();
+
+        parse_quote! {
+            let args_next = wsdf::RegisterArgs {
+                proto_id: args.proto_id,
+                name: args.name,
+                prefix: args.prefix,
+                blurb: #blurb,
+                ws_type: #ws_type,
+                ws_display: #ws_display,
+            };
+        }
+    }
+
+    fn blurb_expr(&self) -> syn::Expr {
+        let blurb_cstr = self.0.blurb_cstr();
+        parse_quote! {
+            if args.blurb != std::ptr::null() { args.blurb }
+            else { #blurb_cstr }
+        }
     }
 
     fn call_inner_register_func(&self) -> syn::Stmt {
@@ -1157,7 +1177,7 @@ impl NamedField {
 }
 
 impl FieldMeta {
-    fn blurb(&self) -> syn::Expr {
+    fn blurb_cstr(&self) -> syn::Expr {
         match &self.docs {
             Some(docs) => cstr!(docs),
             None => parse_quote! { std::ptr::null() },
@@ -1211,7 +1231,7 @@ impl FieldMeta {
     }
 
     fn decl_register_args(&self, name: &syn::Expr, prefix: &syn::Expr) -> syn::Stmt {
-        let blurb = self.blurb();
+        let blurb = self.blurb_cstr();
         let ws_type = self.ws_type_as_expr();
         let ws_display = self.ws_display_as_expr();
         parse_quote! {
