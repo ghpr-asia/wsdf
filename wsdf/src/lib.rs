@@ -1217,7 +1217,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.
     type Emit;
 
-    /// Adds the field to the protocol tree. Must return the new packet offset.
+    /// Adds the field to the protocol tree. Must return the number of bytes dissected.
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
 
     /// Returns the number of bytes this field occupies in the packet.    
@@ -1232,13 +1232,12 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
 }
 
 pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
-    /// Adds the field to the protocol tree using a custom string. Must return the new packet
-    /// offset.
+    /// Adds the field to the protocol tree using a custom string.
     fn add_to_tree_format_value(
         args: &DissectorArgs<'_, 'tvb>,
         s: &impl std::fmt::Display,
         nr_bytes: usize,
-    ) -> usize;
+    );
 
     /// Saves the field into the fields store.
     fn save<'a>(
@@ -1376,9 +1375,7 @@ where
 
 /// Adds a single field to the protocol tree. Internally, this uses the most basic
 /// `proto_tree_add_item` function.
-fn add_to_tree_single_field(args: &DissectorArgs, size: usize, default_enc: u32) -> usize {
-    let offset = args.offset;
-
+fn add_to_tree_single_field(args: &DissectorArgs, size: usize, default_enc: u32) {
     let hf_index = args.get_hf_index().unwrap();
     unsafe {
         epan_sys::proto_tree_add_item(
@@ -1390,8 +1387,6 @@ fn add_to_tree_single_field(args: &DissectorArgs, size: usize, default_enc: u32)
             args.ws_enc.unwrap_or(default_enc),
         );
     }
-
-    offset + size
 }
 
 /// Adds a uint type (u8, u16, etc.) to the protocol tree with a custom string.
@@ -1400,9 +1395,7 @@ fn add_to_tree_format_value_uint(
     size: usize,
     value: c_uint,
     s: &impl std::fmt::Display,
-) -> usize {
-    let offset = args.offset;
-
+) {
     let hf_index = args.get_hf_index().unwrap();
     let fmt = CString::new(ToString::to_string(s)).unwrap();
     unsafe {
@@ -1416,8 +1409,6 @@ fn add_to_tree_format_value_uint(
             fmt.as_ptr(),
         );
     }
-
-    offset + size
 }
 
 /// Adds an int type (i8, i16, etc.) to the protocol tree with a custom string.
@@ -1426,9 +1417,7 @@ fn add_to_tree_format_value_int(
     size: usize,
     value: c_int,
     s: &impl std::fmt::Display,
-) -> usize {
-    let offset = args.offset;
-
+) {
     let hf_index = args.get_hf_index().unwrap();
     let fmt = CString::new(ToString::to_string(s)).unwrap();
     unsafe {
@@ -1442,8 +1431,6 @@ fn add_to_tree_format_value_int(
             fmt.as_ptr(),
         );
     }
-
-    offset + size
 }
 
 /// Registers a hf index.
@@ -1487,7 +1474,8 @@ impl Dissect<'_, ()> for () {
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 0, epan_sys::ENC_NA)
+        add_to_tree_single_field(args, 0, epan_sys::ENC_NA);
+        0
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1507,11 +1495,7 @@ impl Dissect<'_, ()> for () {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for () {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         let hf_index = args.get_hf_index().unwrap();
         let field_name = unsafe { epan_sys::proto_registrar_get_name(hf_index) };
         let fmt = CString::new(s.to_string()).unwrap();
@@ -1527,7 +1511,6 @@ impl<'tvb> Primitive<'tvb, ()> for () {
                 fmt.as_ptr(),
             );
         }
-        args.offset + nr_bytes
     }
 
     fn save<'a>(_args: &DissectorArgs, _gstore: &mut FieldsStore, _lstore: &mut FieldsStore)
@@ -1542,7 +1525,8 @@ impl Dissect<'_, ()> for u8 {
     type Emit = u8;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING);
+        1
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1562,15 +1546,11 @@ impl Dissect<'_, ()> for u8 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for u8 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 1);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_uint(args, 1, value, s)
+        add_to_tree_format_value_uint(args, 1, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1587,7 +1567,8 @@ impl Dissect<'_, ()> for u16 {
     type Emit = u16;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING);
+        2
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1607,15 +1588,11 @@ impl Dissect<'_, ()> for u16 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for u16 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 2);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_uint(args, 2, value, s)
+        add_to_tree_format_value_uint(args, 2, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1632,7 +1609,8 @@ impl Dissect<'_, ()> for u32 {
     type Emit = u32;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING);
+        4
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1652,15 +1630,11 @@ impl Dissect<'_, ()> for u32 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for u32 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 4);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_uint(args, 4, value, s)
+        add_to_tree_format_value_uint(args, 4, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1677,7 +1651,8 @@ impl Dissect<'_, ()> for u64 {
     type Emit = u64;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING);
+        8
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1697,15 +1672,11 @@ impl Dissect<'_, ()> for u64 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for u64 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 8);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_uint(args, 8, value, s)
+        add_to_tree_format_value_uint(args, 8, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1722,7 +1693,8 @@ impl Dissect<'_, ()> for i8 {
     type Emit = i8;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING);
+        1
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1742,15 +1714,11 @@ impl Dissect<'_, ()> for i8 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for i8 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 1);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_int(args, 1, value, s)
+        add_to_tree_format_value_int(args, 1, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1767,7 +1735,8 @@ impl Dissect<'_, ()> for i16 {
     type Emit = i16;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING);
+        2
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1788,15 +1757,11 @@ impl Dissect<'_, ()> for i16 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for i16 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 2);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_int(args, 2, value, s)
+        add_to_tree_format_value_int(args, 2, value, s);
     }
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
     where
@@ -1812,7 +1777,8 @@ impl Dissect<'_, ()> for i32 {
     type Emit = i32;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING);
+        4
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1833,15 +1799,11 @@ impl Dissect<'_, ()> for i32 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for i32 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 4);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_int(args, 4, value, s)
+        add_to_tree_format_value_int(args, 4, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1858,7 +1820,8 @@ impl Dissect<'_, ()> for i64 {
     type Emit = i64;
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
-        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING)
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING);
+        8
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1879,15 +1842,11 @@ impl Dissect<'_, ()> for i64 {
 }
 
 impl<'tvb> Primitive<'tvb, ()> for i64 {
-    fn add_to_tree_format_value(
-        args: &DissectorArgs,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
         debug_assert_eq!(nr_bytes, 8);
 
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
-        add_to_tree_format_value_int(args, 8, value, s)
+        add_to_tree_format_value_int(args, 8, value, s);
     }
 
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
@@ -1904,9 +1863,7 @@ fn add_to_tree_format_value_bytes(
     args: &DissectorArgs,
     nr_bytes: usize,
     s: &impl std::fmt::Display,
-) -> usize {
-    let offset = args.offset;
-
+) {
     let hf_index = args.get_hf_index().unwrap();
     let value = &args.data[args.offset..args.offset + nr_bytes];
     let fmt = CString::new(ToString::to_string(s)).unwrap();
@@ -1916,21 +1873,20 @@ fn add_to_tree_format_value_bytes(
             args.parent,
             hf_index,
             args.tvb,
-            offset as _,
+            args.offset as _,
             nr_bytes as _,
             value.as_ptr(),
             fmt.as_ptr(),
         );
     }
-
-    offset + nr_bytes
 }
 
 impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
     type Emit = &'tvb [u8];
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore<'tvb>) -> usize {
-        add_to_tree_single_field(args, N, epan_sys::ENC_NA)
+        add_to_tree_single_field(args, N, epan_sys::ENC_NA);
+        N
     }
 
     fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -1956,10 +1912,10 @@ impl<'tvb, const N: usize> Primitive<'tvb, [u8]> for [u8; N] {
         args: &DissectorArgs<'_, 'tvb>,
         s: &impl std::fmt::Display,
         nr_bytes: usize,
-    ) -> usize {
+    ) {
         debug_assert_eq!(nr_bytes, N);
 
-        add_to_tree_format_value_bytes(args, nr_bytes, s)
+        add_to_tree_format_value_bytes(args, nr_bytes, s);
     }
 
     fn save<'a>(
@@ -1979,11 +1935,9 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
     type Emit = &'tvb [u8];
 
     fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore<'tvb>) -> usize {
-        // @todo: clarify this length thing
-        debug_assert!(args.list_len.is_some());
-        debug_assert!(args.ws_enc.is_none());
-
-        add_to_tree_single_field(args, args.list_len.unwrap(), epan_sys::ENC_NA)
+        let len = args.list_len.unwrap_or(args.data.len() - args.offset);
+        add_to_tree_single_field(args, len, epan_sys::ENC_NA);
+        len
     }
 
     fn size(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
@@ -2003,13 +1957,15 @@ impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
     }
 }
 
-impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
+impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
     fn add_to_tree_format_value(
         args: &DissectorArgs<'_, 'tvb>,
         s: &impl std::fmt::Display,
         nr_bytes: usize,
-    ) -> usize {
-        add_to_tree_format_value_bytes(args, nr_bytes, s)
+    ) {
+        debug_assert_eq!(nr_bytes, args.list_len.unwrap_or(nr_bytes));
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s);
     }
 
     fn save<'a>(
@@ -2045,15 +2001,13 @@ impl<'tvb> Dissect<'tvb, [u8]> for &[u8] {
     }
 }
 
-impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
+impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
     fn add_to_tree_format_value(
         args: &DissectorArgs<'_, 'tvb>,
         s: &impl std::fmt::Display,
         nr_bytes: usize,
-    ) -> usize {
-        debug_assert_eq!(nr_bytes, args.list_len.unwrap_or(nr_bytes));
-
-        add_to_tree_format_value_bytes(args, nr_bytes, s)
+    ) {
+        <Vec<u8> as Primitive<'tvb, [u8]>>::add_to_tree_format_value(args, s, nr_bytes);
     }
 
     fn save<'a>(
@@ -2063,9 +2017,7 @@ impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
     ) where
         'tvb: 'a,
     {
-        let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
-        gstore.insert_bytes(args.prefix, value);
-        lstore.insert_bytes(args.prefix_local, value);
+        <Vec<u8> as Primitive<'tvb, [u8]>>::save(args, gstore, lstore);
     }
 }
 
@@ -2076,11 +2028,11 @@ where
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        let mut offset = args.offset;
+        let mut size = 0;
         for _ in 0..args.list_len.unwrap() {
-            offset = <T as Dissect<()>>::add_to_tree(args, fields);
+            size += <T as Dissect<()>>::add_to_tree(args, fields);
         }
-        offset
+        size
     }
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
@@ -2105,11 +2057,11 @@ where
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        let mut offset = args.offset;
+        let mut size = 0;
         for _ in 0..args.list_len.unwrap() {
-            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+            size += <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
         }
-        offset
+        size
     }
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
@@ -2134,11 +2086,11 @@ where
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        let mut offset = args.offset;
+        let mut size = 0;
         for _ in 0..N {
-            offset = <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
+            size += <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
         }
-        offset
+        size
     }
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
@@ -2163,11 +2115,11 @@ where
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        let mut offset = args.offset;
+        let mut size = 0;
         for _ in 0..N {
-            offset = <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+            size += <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
         }
-        offset
+        size
     }
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
@@ -2192,7 +2144,6 @@ where
     type Emit = ();
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        // For dissection purposes, a Vec<T> is identical to a &[T]
         <Vec<T> as Dissect<'tvb, ()>>::add_to_tree(args, fields)
     }
 

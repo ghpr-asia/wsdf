@@ -967,7 +967,7 @@ impl StructInnards {
             StructInnards::UnitTuple(_) => parse_quote! {
                 let offset = args.offset;
                 #(#dissect_fields)*
-                offset
+                offset - args.offset
             },
             StructInnards::NamedFields { .. } => parse_quote! {
                 let offset = args.offset;
@@ -976,7 +976,7 @@ impl StructInnards {
                 unsafe {
                     wsdf::epan_sys::proto_item_set_len(parent, (offset - args.offset) as _);
                 }
-                offset
+                offset - args.offset
             },
         };
         parse_quote! {
@@ -1465,19 +1465,21 @@ impl FieldDissectionPlan<'_> {
             AddStrategy::ConsumeWith(consume_fn) => {
                 parse_quote! {
                     let (n, s) = wsdf::tap::handle_consume_with(&ctx, #consume_fn);
-                    let offset = <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
+                    <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
+                    let offset = offset + n;
                 }
             }
             AddStrategy::DecodeWith(decode_fn) => {
                 parse_quote! {
                     let s = wsdf::tap::handle_decode_with(&ctx, #decode_fn);
                     let n = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::size(&args_next, fields);
-                    let offset = <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
+                    <#ty as wsdf::Primitive<'tvb, #maybe_bytes>>::add_to_tree_format_value(&args_next, &s, n);
+                    let offset = offset + n;
                 }
             }
             AddStrategy::Hidden => self.handle_hidden(),
             AddStrategy::Default => vec![parse_quote! {
-                let offset = <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::add_to_tree(&args_next, fields);
+                let offset = offset + <#ty as wsdf::Dissect<'tvb, #maybe_bytes>>::add_to_tree(&args_next, fields);
             }],
         }
     }
