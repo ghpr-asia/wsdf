@@ -6,16 +6,13 @@
 //! [GitHub repo](https://github.com/ghpr-asia/wsdf/tree/main/wsdf/examples/).
 //!
 //! * [Getting started](#getting-started)
-//! * [Types](#types)
-//!     * [Mapping](#mapping)
-//!     * [User-defined types](#user-defined-types)
-//!     * [Decoding enums](#decoding-enums)
-//!     * [Lists](#lists)
-//! * [Taps and custom displays](#taps-and-custom-displays)
-//!     * [Using `Fields`](#using-fields)
+//! * [Using derive](#using-derive)
+//!     * [The `Dissect` and `Proto` traits](#the-dissect-and-proto-traits)
+//!     * [`version!()` and `protocol!()`](#version-and-protocol)
+//!     * [Taps](#taps)
 //!     * [Custom displays](#custom-displays)
-//!         * [`decode_with`](#decode_with)
-//!         * [`consume_with`](#consume_with)
+//!     * [Decoding enums](#decoding-enums)
+//!     * [Handling bytes](#handling-bytes)
 //! * [Calling subdissectors](#calling-subdissectors)
 //! * [Attributes](#attributes)
 //!     * [Protocol attributes](#protocol-attributes)
@@ -31,11 +28,14 @@
 //!
 //! ```rust
 //! // lib.rs
-//! wsdf::version!("0.0.1", 4, 0);
+//! use wsdf::{protocol, version, Dissect, Proto};
 //!
-//! #[derive(wsdf::Protocol)]
+//! version!("0.0.1", 4, 0);
+//! protocol!(Udp);
+//!
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = [("ip.proto", 17)])]
-//! struct UDP {
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
 //!     length: u16,
@@ -45,12 +45,13 @@
 //! }
 //! ```
 //!
-//! * The **`wsdf::version!` macro** specifies the plugin version as 0.0.1, built for Wireshark
-//! version 4.0.X. This information is required by Wireshark when loading the plugin.
-//! * The protocol itself should **derive `wsdf::Protocol`**. Since this is UDP, the dissector is
-//! registered to the `"ip.proto"` dissector table, and also sets up the `"udp.port"` dissector
-//! table for subdissectors to use. More details about these annotations can be found in the
-//! sections below.
+//! * The **[`version`] macro** specifies the plugin version as 0.0.1, built for Wireshark version
+//! 4.0.X. This information is required by Wireshark when loading the plugin.
+//! * The **[`protocol`] macro** indicates that the `Udp` type should be registered as a protocol.
+//! Multiple types can be passed in like this.
+//! * The protocol itself should **derive [`Dissect`] and [`Proto`]**. Since this is UDP, the
+//! dissector is registered to the `"ip.proto"` dissector table, and also sets up the `"udp.port"`
+//! table. You will find more details about these attributes below.
 //!
 //! The crate type must be specified in `Cargo.toml`.
 //!
@@ -67,135 +68,67 @@
 //! Wireshark or tshark to load it upon startup. On Linux, this is at
 //! `~/.local/lib/wireshark/plugins/4.0/epan/`.
 //!
-//! # Types
+//! # Using derive
 //!
-//! ## Mapping
+//! ## The `Dissect` and `Proto` traits
 //!
-//! wsdf automatically maps some Rust types to Wireshark types.
+//! Each type which is to be dissected must implement [`Dissect`]; this is already implemented for
+//! some standard types. You should use the `#[derive(Dissect)]` macro for your own types. The
+//! derive macro should be able to handle most structs and enums. The [`Proto`] trait, on the other
+//! hand, is only intended for types which represent complete protocols.
 //!
-//! Rust type              | WS type    | WS encoding      | WS display
-//! -----------------------|------------|------------------|-----------------------------------------
-//! `u8` to `u64`          | `FT_UINT*` | `ENC_BIG_ENDIAN` | `BASE_DEC`
-//! `i8` to `i64`          | `FT_INT*`  | `ENC_BIG_ENDIAN` | `BASE_DEC`
-//! `Vec<u8>` or `[u8; _]` | `FT_BYTES` | `ENC_NA`         | `SEP_COLON \| BASE_SHOW_ASCII_PRINTABLE`
+//! The following re-write of the UDP dissector should clarify this distinction. `Checksum` is a
+//! user-defined type, but it does not represent a complete protocol - it simply appears somewhere
+//! in the protocol. The `Udp` struct, however, does represent the whole protocol, thus it derives
+//! `Proto` as well as `Dissect`.
 //!
-//! ## User-defined types
-//!
-//! Each user-defined type must derive `ProtocolField`.
+//! Note that only structs can derive `Proto` at the moment.
 //!
 //! ```rust
-//! #[derive(wsdf::Protocol)]
-//! #[wsdf(decode_from = "moldudp64.payload")]
-//! struct MyProtocol {
-//!     header: Header,
-//! }
-//!
-//! #[derive(wsdf::ProtocolField)]
-//! struct Header {
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(Udp);
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 17)])]
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
-//!     sequence: SequenceNumber,
+//!     length: u16,
+//!     checksum: Checksum,
+//!     #[wsdf(subdissector = ("udp.port", "dst_port", "src_port"))]
+//!     payload: Vec<u8>,
 //! }
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! struct SequenceNumber(u64);
+//! #[derive(Dissect)]
+//! struct Checksum(u16);
 //! ```
 //!
-//! You may use structs or enums as fields, but their contents must either be named fields or a
-//! unit tuple. Something like `struct PortPair(u16, u16)` cannot derive `Protocol` or
-//! `ProtocolField`.
+//! ## `version!()` and `protocol!()`
 //!
-//! The root type which derives `Protocol` must be a struct.
+//! The `version!()` macro declares some version symbols which Wireshark must read when registering
+//! the plugin. The `protocol!()` macro is used to select types to be registered as protocols in
+//! Wireshark. These types should implement `Proto`, and multiple types can be selected in this way.
 //!
-//! ## Decoding enums
+//! There should be exactly one `version!()` and one `protocol!()` macro used per library, as they
+//! declare global symbols.
 //!
-//! For enum fields, wsdf needs some help to know which variant to continue decoding the packet as.
-//! For now, the variant to use must be determined by a prior field, and the enum type must
-//! implement a method to determine the variant by returning the "index" of the selected variant.
-//! This method must be named `dispatch_*` by convention, where `*` is the field's name.
+//!```rust
+//! use wsdf::{protocol, version, Proto, Dissect};
 //!
-//! ```rust
-//! #[derive(wsdf::ProtocolField)]
-//! struct PacketInfo {
-//!     typ: u8,
-//!     #[wsdf(dispatch_field = "typ")]
-//!     data: Data,
-//! }
+//! // Declare plugin version 0.0.1, built for Wireshark version 4.0.
+//! version!("0.0.1", 4, 0);
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! enum Data {
-//!     Foo(u8),
-//!     Bar(u16),
-//!     Baz,
-//! }
+//! protocol!(Udp, UdpLite); // multiple protocols per dynamic library!
 //!
-//! impl Data {
-//!     fn dispatch_typ(typ: &u8) -> usize {
-//!         match *typ {
-//!             b'F' => 0, // Foo
-//!             b'B' => 1, // Bar
-//!             _ => 2,    // Baz
-//!         }
-//!     }
-//! }
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 17)])]
+//! struct Udp { /* UDP fields */ }
+//!
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 136)])]
+//! struct UdpLite { /* UDP-lite fields */ }
 //! ```
 //!
-//! For large enums, it may be difficult to track the "indices" of each variant. Thus, wsdf
-//! provides a `Dispatch` helper macro.
-//!
-//! ```rust
-//! # #[derive(wsdf::ProtocolField)]
-//! # struct PacketInfo {
-//! #     typ: u8,
-//! #     #[wsdf(dispatch_field = "typ")]
-//! #     data: Data,
-//! # }
-//! #[derive(wsdf::ProtocolField, wsdf::Dispatch)]
-//! enum Data {
-//!     Foo(u8),
-//!     Bar(u16),
-//!     Baz,
-//! }
-//!
-//! impl Data {
-//!     fn dispatch_typ(typ: &u8) -> DataDispatch {
-//!         use DataDispatch::*;
-//!         match *typ {
-//!             b'F' => Foo,
-//!             b'B' => Bar,
-//!             _ => Baz,
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! This generates a new enum named `DataDispatch` which implements `Into<usize>`, which can be
-//! directly returned from the `dispatch_typ` function.
-//!
-//! ## Lists
-//!
-//! wsdf understands arrays and `Vec`s. You would use a `Vec` if the number of elements is unknown
-//! at compile time, but provided by another field in the protocol.
-//!
-//! ```rust
-//! #[derive(wsdf::Protocol)]
-//! #[wsdf(decode_from = "udp.port")]
-//! struct MoldUDP64 {
-//!     session: [u8; 10],
-//!     sequence: u64,
-//!     message_count: u16,
-//!     #[wsdf(len_field = "message_count")]
-//!     messages: Vec<MessageBlock>,
-//! }
-//! # #[derive(wsdf::ProtocolField)]
-//! # struct MessageBlock {
-//! #     len: u16,
-//! #     #[wsdf(len_field = "len")]
-//! #     data: Vec<u8>,
-//! # }
-//! ```
-//!
-//! # Taps and custom displays
+//! ## Taps
 //!
 //! wsdf features a `tap` attribute which allows you to register some function(s) to be called
 //! whenever the field is decoded. These functions follow the [Axum style magic
@@ -208,16 +141,17 @@
 //! * [`Fields`](tap::Fields), a map of the fields encountered so far
 //! * [`Offset`](tap::Offset), the current byte offset into the packet
 //! * [`Packet`](tap::Packet), the raw bytes of the packet
-//! * [`PacketNanos`](tap::PacketNanos), the nanosecond timestamp at which the packet was recorded
+//! * ...and more.
 //!
 //! Any permutation of the parameters is supported.
 //!
 //! ```rust
 //! use wsdf::tap::{Field, PacketNanos};
+//! use wsdf::Dissect;
 //!
-//! #[derive(wsdf::ProtocolField)]
+//! #[derive(Dissect)]
 //! struct IpAddr (
-//!     #[wsdf(tap = ["log_ts", "check_loopback", "slow_down"])]
+//!     #[wsdf(bytes, tap = ["log_ts", "check_loopback", "slow_down"])]
 //!     [u8; 4],
 //! );
 //!
@@ -237,7 +171,7 @@
 //! In this example, wsdf will invoke `log_ts`, `check_loopback`, and `slow_down`, in that order,
 //! when it encounters the field. Each function passed to the `tap` attribute must return `()`.
 //!
-//! ## Using `Fields`
+//! ### Using `Fields`
 //!
 //! Fields can be marked for saving via the `#[wsdf(save)]` attribute. You can then access their
 //! values through the [`Fields`](tap::Fields) parameter, which holds a key value store. The key to
@@ -247,8 +181,10 @@
 //!
 //! ```rust
 //! use wsdf::tap::Fields;
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(MarketByPrice);
 //!
-//! #[derive(wsdf::Protocol)]
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = "moldudp64.payload")]
 //! struct MarketByPrice {
 //!     nanos: u64,
@@ -258,7 +194,7 @@
 //!     updates: Vec<PriceUpdate>,
 //! }
 //!
-//! #[derive(wsdf::ProtocolField)]
+//! #[derive(Dissect)]
 //! struct PriceUpdate {
 //!     side: u8,
 //!     #[wsdf(save)]
@@ -270,11 +206,11 @@
 //! fn peek(Fields(fields): Fields) {
 //!     // `nanos` is an Option<&u64>, but it is not saved, so it should be `None`
 //!     let nanos = fields.get_u64("market_by_price.nanos");
-//!     assert_eq!(nanos, None);
+//!     assert!(nanos.is_none());
 //!
 //!     // `num_updates` is an Option<&u8>, and it is saved, it should be a `Some`
 //!     let num_updates = fields.get_u8("market_by_price.num_updates");
-//!     assert!(matches!(num_updates, Some(_)));
+//!     assert!(num_updates.is_some());
 //!
 //!     // `prices` is a `&[i32]`.
 //!     let prices = fields.get_i32_multi("market_by_price.updates.price");
@@ -284,33 +220,36 @@
 //!
 //! ## Custom displays
 //!
-//! By default, wsdf does not perform any additional formatting on fields. All formatting and
+//! By default, wsdf does not perform any additional formatting on fields, as all formatting and
 //! display is handled by Wireshark. However, you may wish to customize the way some fields appear
 //! in the UI. wsdf enables this via the `decode_with` and `consume_with` attributes, which are
-//! similar to taps. Their main differences from taps are
+//! similar to taps, in the sense that their parameters work the same way.
 //!
-//! * You can only have one `decode_with` or `consume_with` per field
-//! * `decode_with` functions must return something implementing `Display`
-//! * `consume_with` functions must return `(usize, T)` where `T` is anything implementing
-//! `Display`
+//! * You can only have one `decode_with` or `consume_with` per field.
+//! * They can only be used on fields implementing [`Primitive`].
+//!
+//! `decode_with` functions must return something implementing `Display`, which will used as the
+//! field's value in Wireshark's UI. You would choose `consume_with` instead if you need full
+//! control over the number of bytes consumed - `consume_with` functions must return `(usize, T)`
+//! where `T` is anything implementing `Display`.
 //!
 //! ### `decode_with`
 //!
-//! You may use `decode_with` to customize how a field appears in Wireshark's UI.
+//! In this example, we'll use `decode_with` to format an integer into a human-friendly string.
 //!
 //! ```rust
-//! use wsdf::tap::Field;
-//!
-//! #[derive(wsdf::ProtocolField)]
+//! # use wsdf::tap::Field;
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
 //! struct Order {
 //!     #[wsdf(decode_with = "decode_side")]
-//!     side: [u8; 1],
+//!     side: u8,
 //!     price: i32,
 //!     quantity: u64,
 //! }
 //!
-//! fn decode_side(Field(side): Field<&[u8]>) -> &'static str {
-//!     match side[0] {
+//! fn decode_side(Field(side): Field<u8>) -> &'static str {
+//!     match side {
 //!         b'B' => "Bid",
 //!         b'A' => "Ask",
 //!         _ => "Unknown",
@@ -321,7 +260,7 @@
 //! By default, the `side` field will appear as an ascii byte string in the UI (`B`, `A`). The
 //! `decode_side` function takes the value of `side` and returns a more user friendly display.
 //!
-//! In this example, our `decode_side` function returned a `&'static str`. But it can be anything
+//! In this example, the `decode_side` function returned a `&'static str`. But it can be anything
 //! which implements `Display`, so `String`, `Box<dyn Display>`, etc. are all okay.
 //!
 //! ### `consume_with`
@@ -335,17 +274,73 @@
 //!
 //! ```rust
 //! use wsdf::tap::{Offset, Packet};
+//! use wsdf::Dissect;
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! struct MyProto {
-//!     #[wsdf(consume_with = "consume_bytes")]
-//!     xs: Vec<u8>,
-//! }
+//! #[derive(Dissect)]
+//! struct SomeData(#[wsdf(bytes, consume_with = "consume_bytes")] Vec<u8>);
 //!
 //! fn consume_bytes(Offset(offset): Offset, Packet(pkt): Packet) -> (usize, String) {
 //!     // Use the combination of the current offset and raw bytes from
 //!     // `Packet` to manually parse these bytes.
 //!     unimplemented!()
+//! }
+//! ```
+//!
+//! ## Decoding enums
+//!
+//! For enum fields, wsdf needs some help to know which variant to continue decoding the packet as.
+//! You must provide the `get_variant` attribute which registers a function to help determine the
+//! selected variant. This function follows the same parameter conventions as taps, but must return
+//! a `&'static str` matching one of the variant's names.
+//!
+//! ```rust
+//! use wsdf::{tap::FieldsLocal, Dissect};
+//!
+//! #[derive(Dissect)]
+//! struct OrderInfo {
+//!     #[wsdf(save)]
+//!     typ: u8,
+//!     #[wsdf(get_variant = "get_order_variant")]
+//!     order: Order,
+//! }
+//!
+//! #[derive(Dissect)]
+//! enum Order {
+//!     Bid {
+//!         price: i32,
+//!         quantity: u64,
+//!     },
+//!     Ask {
+//!         price: i32,
+//!         quantity: u64,
+//!     },
+//!     Unknown,
+//! }
+//!
+//! fn get_order_variant(FieldsLocal(fields): FieldsLocal) -> &'static str {
+//!     let typ = fields.get_u8("typ").unwrap();
+//!     match typ {
+//!         b'A' => "Ask",
+//!         b'B' => "Bid",
+//!         _ => "Unknown",
+//!     }
+//! }
+//! ```
+//!
+//! ## Handling bytes
+//!
+//! Most likely, you would represent bytes as a `Vec<u8>` or `[u8; _]`. However, these could also
+//! be interpreted as a list of literal octets, instead of one contiguous byte string. To help
+//! disambiguate, you must tag fields which should be interpreted as bytes with the `bytes`
+//! attribute.
+//!
+//! ```rust
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
+//! struct Scores {
+//!     #[wsdf(bytes)] // 32-octect byte string
+//!     id: [u8; 32],
+//!     scores: [u8; 32], // literally 32 separate octets
 //! }
 //! ```
 //!
@@ -358,7 +353,8 @@
 //! The first variant can be seen in the MoldUDP64 dissector.
 //!
 //! ```rust
-//! #[derive(wsdf::ProtocolField)]
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
 //! struct MessageBlock {
 //!     message_length: u16,
 //!     #[wsdf(len_field = "message_length", subdissector = "moldudp64.payload")]
@@ -372,9 +368,11 @@
 //! The second variant can be seen in the UDP dissector.
 //!
 //! ```rust
-//! #[derive(wsdf::Protocol)]
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(Udp);
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = [("ip.proto", 17)])]
-//! struct UDP {
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
 //!     length: u16,
@@ -419,7 +417,7 @@
 //!
 //! ## Type-level attributes
 //!
-//! These attributes can appear on any type which derives `Protocol` or `ProtocolField`.
+//! These attributes can appear on any type which derives `Dissect`.
 //!
 //! * `#[wsdf(pre_dissect = "...")]`
 //! * `#[wsdf(pre_dissect = ["...", ...])]`
@@ -455,6 +453,11 @@
 //! Mark a field to be saved, such that it becomes accessible from the [`Fields`](tap::Fields)
 //! parameter. See the section on [Using `Fields`](#using-fields) for more information.
 //!
+//! * `#[wsdf(bytes)]`
+//!
+//! Indicate that a field should be interpreted as a contiguous byte string. Meant for fields of
+//! type `Vec<u8>`, `&[u8]`, or `[u8; _]` to disambiguate them from literal lists of octets.
+//!
 //! * `#[wsdf(len_field = "...")]`
 //!
 //! Intended for fields of type `Vec<_>`. Must point to a prior integer field which specifies the
@@ -482,18 +485,16 @@
 //! `#[wsdf(display = "SEP_COLON" | "BASE_SHOW_ASCII_PRINTABLE")]` to mean "try to decode the bytes
 //! as ascii characters, failing which, show them as regular octets separated by a colon".
 //!
-//! * `#[wsdf(dispatch_field = "...")]`
+//! * `#[wsdf(get_variant = "...")]`
 //!
-//! For enum fields, specifies a previous field which is used to determine the variant. The enum
-//! type must implement a corresponding method to receive this field and return an integer
-//! representing the variant (the first is 0, the next is 1, etc.). See the section on [Decoding
-//! enums](#decoding-enums) for more information.
+//! For enum fields, specifies a function which is used to determine the variant. The function must
+//! return a `&'static str` matching one of the variant names.
 //!
 //! * `#[wsdf(tap = "...")]`
 //! * `#[wsdf(tap = ["...", ...])]`
 //!
-//! Specifies the path to function(s) to inspect the packet. See the section on
-//! [Taps](#taps-and-custom-displays) for more information.
+//! Specifies the path to function(s) to inspect the packet. See the section on [Taps](#taps) for
+//! more information.
 //!
 //! * `#[wsdf(decode_with = "...")]`
 //!
