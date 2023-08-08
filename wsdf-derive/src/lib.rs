@@ -365,6 +365,7 @@ pub fn derive_dispatch(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Derive macro for the `Dissect` trait.
 #[proc_macro_derive(Dissect, attributes(wsdf))]
 pub fn derive_dissect(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -511,13 +512,13 @@ pub fn protocol(input: TokenStream) -> TokenStream {
         .iter()
         .enumerate()
         .flat_map(|(i, ty)| -> Vec<syn::Stmt> {
+            // We'll call the `proto_register_plugin` function once for each protocol.
             let plug = format_ident!("PLUG_{i}");
             parse_quote! {
                 static mut #plug: wsdf::epan_sys::proto_plugin = wsdf::epan_sys::proto_plugin {
                     register_protoinfo: None,
                     register_handoff: None,
                 };
-                // SAFETY: this code is only called once in a single thread when wireshark starts
                 unsafe {
                     #plug.register_protoinfo =
                         std::option::Option::Some(<#ty as wsdf::Proto>::register_protoinfo);
@@ -529,6 +530,11 @@ pub fn protocol(input: TokenStream) -> TokenStream {
         });
 
     quote! {
+        // We use three global maps to keep track of "static" values. In C dissectors, these would
+        // literally be static quantities defined somewhere in the code.
+        //
+        // There might be a better way to inject these into our dissection and registration
+        // routines, but this should work perfectly fine, even if it is ugly.
         thread_local! {
             static __WSDF_HF_INDICES: std::cell::RefCell<wsdf::HfIndices> = wsdf::HfIndices::default().into();
             static __WSDF_ETT_INDICES: std::cell::RefCell<wsdf::EttIndices> = wsdf::EttIndices::default().into();
@@ -543,6 +549,7 @@ pub fn protocol(input: TokenStream) -> TokenStream {
     }.into()
 }
 
+/// Derive macro for the `Proto` trait.
 #[proc_macro_derive(Proto, attributes(wsdf))]
 pub fn derive_proto(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -615,10 +622,13 @@ fn derive_proto_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
                 __WSDF_HF_INDICES.with(|hf_indices|
                     __WSDF_ETT_INDICES.with(|etts|
                         __WSDF_DTABLES.with(|dtables| {
+                            // create the packet-lifespan fields store
+                            let mut fields = wsdf::FieldsStore::default();
+
                             let hf_indices = hf_indices.borrow();
                             let etts = etts.borrow();
                             let dtables = dtables.borrow();
-                            let mut fields = wsdf::FieldsStore::default();
+
                             let args = wsdf::DissectorArgs {
                                 hf_indices: &hf_indices,
                                 etts: &etts,
@@ -670,7 +680,7 @@ fn derive_proto_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
                                 proto_id,
                                 name: #proto_name_cstr,
                                 prefix: #proto_filter,
-                                blurb: std::ptr::null(), // @todo
+                                blurb: std::ptr::null(),
                                 ws_type: std::option::Option::None,
                                 ws_display: std::option::Option::None,
                             };

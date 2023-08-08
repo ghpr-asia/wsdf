@@ -1621,6 +1621,12 @@ fn assign_subdissector_key_types(fields: &[NamedField]) -> Vec<NamedField> {
                     ..field.meta.clone()
                 },
                 Some(Subdissector::Table { fields: keys, .. }) => {
+                    // The idea here is to scan through the provided list of fields until the first
+                    // one which matches one of the keys.
+                    //
+                    // @todo: ensure that all the keys can be found, and that their types match.
+                    // This should be relatively easy once we remove the old code and use a better
+                    // abstraction for Subdissector.
                     let mut new_meta = field.meta.clone();
                     for field in fields {
                         for key in keys {

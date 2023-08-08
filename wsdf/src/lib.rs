@@ -1214,6 +1214,7 @@ impl DissectorArgs<'_, '_> {
 ///
 /// Each method here is part of an API required by Wireshark.
 pub trait Proto {
+    /// Entry point for each packet.
     #[allow(clippy::missing_safety_doc)]
     unsafe extern "C" fn dissect_main(
         tvb: *mut epan_sys::tvbuff,
@@ -1222,9 +1223,12 @@ pub trait Proto {
         data: *mut c_void,
     ) -> c_int;
 
+    /// Required by wireshark to register all information related to this protocol (protocol name,
+    /// fields, ett, etc.).
     #[allow(clippy::missing_safety_doc)]
     unsafe extern "C" fn register_protoinfo();
 
+    /// Required by wireshark to know which lower-level protocols can be passed to this protocol.
     #[allow(clippy::missing_safety_doc)]
     unsafe extern "C" fn register_handoff();
 }
