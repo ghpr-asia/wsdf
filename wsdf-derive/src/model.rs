@@ -1057,7 +1057,7 @@ impl UnitTuple {
     fn blurb_expr(&self) -> syn::Expr {
         let blurb_cstr = self.0.blurb_cstr();
         parse_quote! {
-            if args.blurb != std::ptr::null() { args.blurb }
+            if !args.blurb.is_null() { args.blurb }
             else { #blurb_cstr }
         }
     }
