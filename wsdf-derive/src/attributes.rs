@@ -392,26 +392,26 @@ impl OptionBuilder for VariantOptions {
     }
 }
 
-const META_DECODE_FROM: &str = "decode_from";
-const META_PROTO_DESC: &str = "proto_desc";
-const META_PROTO_NAME: &str = "proto_name";
-const META_PROTO_FILTER: &str = "proto_filter";
-const META_HIDE: &str = "hide";
-const META_SAVE: &str = "save";
-const META_LEN: &str = "len_field";
-const META_WS_TYPE: &str = "typ";
-const META_WS_ENC: &str = "enc";
-const META_WS_DISPLAY: &str = "display";
-const META_DISPATCH: &str = "dispatch_field";
-const META_GET_VARIANT: &str = "get_variant";
-const META_DECODE_WITH: &str = "decode_with";
-const META_TAP: &str = "tap";
-const META_CONSUME_WITH: &str = "consume_with";
-const META_SUBDISSECTOR: &str = "subdissector";
-const META_RENAME: &str = "rename";
-const META_PRE_DISSECT: &str = "pre_dissect";
-const META_POST_DISSECT: &str = "post_dissect";
-const META_BYTES: &str = "bytes";
+pub(crate) const META_DECODE_FROM: &str = "decode_from";
+pub(crate) const META_PROTO_DESC: &str = "proto_desc";
+pub(crate) const META_PROTO_NAME: &str = "proto_name";
+pub(crate) const META_PROTO_FILTER: &str = "proto_filter";
+pub(crate) const META_HIDE: &str = "hide";
+pub(crate) const META_SAVE: &str = "save";
+pub(crate) const META_LEN: &str = "len_field";
+pub(crate) const META_WS_TYPE: &str = "typ";
+pub(crate) const META_WS_ENC: &str = "enc";
+pub(crate) const META_WS_DISPLAY: &str = "display";
+pub(crate) const META_DISPATCH: &str = "dispatch_field";
+pub(crate) const META_GET_VARIANT: &str = "get_variant";
+pub(crate) const META_DECODE_WITH: &str = "decode_with";
+pub(crate) const META_TAP: &str = "tap";
+pub(crate) const META_CONSUME_WITH: &str = "consume_with";
+pub(crate) const META_SUBDISSECTOR: &str = "subdissector";
+pub(crate) const META_RENAME: &str = "rename";
+pub(crate) const META_PRE_DISSECT: &str = "pre_dissect";
+pub(crate) const META_POST_DISSECT: &str = "post_dissect";
+pub(crate) const META_BYTES: &str = "bytes";
 
 /// Extracts all the meta items from a list of attributes.
 pub(crate) fn get_meta_items(attrs: &[&syn::Attribute]) -> syn::Result<Vec<syn::Meta>> {
