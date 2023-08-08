@@ -750,6 +750,8 @@ pub mod tap {
     /// A key value store of previous fields encountered and saved. Each key is the Wireshark
     /// filter for that field.
     pub struct Fields<'a>(pub &'a FieldsStore<'a>);
+    /// A key value store of fields encountered within the data type. Each key is the identifier of
+    /// the field as in Rust code.
     pub struct FieldsLocal<'a>(pub &'a FieldsStore<'a>);
     /// The nanosecond timestamp recorded in the packet capture data.
     pub struct PacketNanos(pub i64);
@@ -1001,7 +1003,8 @@ pub struct DissectorArgs<'a, 'tvb> {
     /// Wireshark filter string for the next expected field.
     pub prefix: &'a str,
 
-    /// Last segment of the prefix, corresponding to the field's portion.
+    /// Last segment of the prefix, corresponding to the field's portion. Should correspond to the
+    /// field's identifer as in Rust code.
     pub prefix_local: &'a str,
 
     /// Offset at which the next field is expected.
@@ -1042,12 +1045,15 @@ pub struct RegisterArgs<'a> {
     pub ws_display: Option<c_int>,
 }
 
+/// A key-value store of wireshark filter strings to registered hf indices.
 #[derive(Default)]
 pub struct HfIndices(HashMap<String, c_int>);
 
+/// A key-value store of wireshark filter strings to ett indices.
 #[derive(Default)]
 pub struct EttIndices(HashMap<String, c_int>);
 
+/// A key-value store of dissector table names e.g. "udp.port" to its dissector table pointer.
 #[derive(Default)]
 pub struct DissectorTables(HashMap<&'static str, *mut epan_sys::dissector_table>);
 
@@ -1131,6 +1137,8 @@ impl DissectorTables {
         table_ptr
     }
 
+    /// Creates an integer table if it does not exist. In theory this can be used to create tables
+    /// for strings as well, but we do not support that yet.
     pub fn get_or_create_integer_table(
         &mut self,
         proto_id: c_int,
@@ -1155,6 +1163,8 @@ impl DissectorTables {
     }
 }
 
+/// Just a logical grouping of all the integers or pointers we need to set when registering the
+/// dissector plugin.
 pub struct WsIndices<'tvb> {
     pub hf: &'tvb mut HfIndices,
     pub ett: &'tvb mut EttIndices,
@@ -1172,6 +1182,9 @@ impl DissectorArgs<'_, '_> {
         self.etts.get(self.prefix)
     }
 
+    /// Adds a subtree using the current prefix. The size of the subtree is initialized to -1, and
+    /// the caller should ensure that it is fixed appropriately via `proto_item_set_len` eventually
+    /// when the size becomes known.
     pub fn add_subtree(&self) -> *mut epan_sys::proto_item {
         let subtree_hf_index = self.get_hf_index().unwrap();
         let parent = unsafe {
@@ -1196,6 +1209,9 @@ impl DissectorArgs<'_, '_> {
     }
 }
 
+/// A type which represents a complete protocol.
+///
+/// Each method here is part of an API required by Wireshark.
 pub trait Proto {
     #[allow(clippy::missing_safety_doc)]
     unsafe extern "C" fn dissect_main(
@@ -1212,6 +1228,11 @@ pub trait Proto {
     unsafe extern "C" fn register_handoff();
 }
 
+/// A type which can be dissected.
+///
+/// This is different from [`Proto`]. `Dissect` should be implemented for all types which appear
+/// within the protocol, while `Proto` should only be derived for the types which represent
+/// complete protocols.
 pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     /// We would like to query the value of some fields, e.g. `u8`. If the type supports this
     /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.
@@ -1231,6 +1252,7 @@ pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
     fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
 }
 
+/// A type which is simple enough to support some extensions to the [`Dissect`] trait.
 pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
     /// Adds the field to the protocol tree using a custom string.
     fn add_to_tree_format_value(
@@ -1239,7 +1261,8 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
         nr_bytes: usize,
     );
 
-    /// Saves the field into the fields store.
+    /// Saves the field into the fields store. Currently, two stores are supported, where `gstore`
+    /// applies to the entire packet while `lstore` is for the current type.
     fn save<'a>(
         args: &DissectorArgs<'_, 'tvb>,
         gstore: &mut FieldsStore<'tvb>,
@@ -1248,12 +1271,18 @@ pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
         'tvb: 'a;
 }
 
+/// A type which can be used to key a dissector table. For example, integer values can be used to
+/// key the "udp.port" table.
 pub trait SubdissectorKey {
+    /// Create a table for the current type, and save it into `dtables`.
     fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables);
 
+    /// Given the current dissection state and the dissector table name, tries to use itself to key
+    /// the table and call a subdissector.
     fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize;
 }
 
+/// A type which can be subdissected. Should only apply to byte-ish types.
 pub trait Subdissect<'tvb>: Dissect<'tvb, [u8]> {
     fn try_subdissector(
         args: &DissectorArgs,
@@ -1263,11 +1292,15 @@ pub trait Subdissect<'tvb>: Dissect<'tvb, [u8]> {
         key.try_subdissector(args, name)
     }
 
+    /// Returns a pointer to a new TVB to hand to subdissectors.
     fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff;
 }
 
 fn setup_tvb_next_with_len(args: &DissectorArgs, len: Option<usize>) -> *mut epan_sys::tvbuff {
     let tvb_reported_len = unsafe { epan_sys::tvb_reported_length(args.tvb) as usize };
+
+    // If no length is provided, we'll assume that the entire remaining packet should be passed to
+    // the subdissector.
     let tvb_next_len = len.unwrap_or(tvb_reported_len - args.offset);
     unsafe { epan_sys::tvb_new_subset_length(args.tvb, args.offset as _, tvb_next_len as _) }
 }
@@ -1290,6 +1323,7 @@ impl<const N: usize> Subdissect<'_> for [u8; N] {
     }
 }
 
+/// Tries a uint dissector and returns the number of bytes consumed.
 fn dissector_try_uint(args: &DissectorArgs, name: &'static str, value: u32) -> usize {
     let subdissector = args.dtables.get(name).unwrap();
     unsafe {
@@ -1298,6 +1332,22 @@ fn dissector_try_uint(args: &DissectorArgs, name: &'static str, value: u32) -> u
     }
 }
 
+fn create_integer_table_base_dec(
+    proto_id: c_int,
+    name: &'static str,
+    dtables: &mut DissectorTables,
+    ws_type: c_uint,
+) {
+    dtables.get_or_create_integer_table(
+        proto_id,
+        name,
+        ws_type,
+        epan_sys::field_display_e_BASE_DEC as _,
+    );
+}
+
+// We use `()` to represent the Decode As dissector tables, since those tables have no key. This is
+// just a matter of consistency and has no real meaning.
 impl SubdissectorKey for () {
     fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
         dtables.get_or_create_decode_as(proto_id, name);
@@ -1305,6 +1355,7 @@ impl SubdissectorKey for () {
 
     fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
         let subdissector = args.dtables.get(name).unwrap();
+        // The `dissector_try_payload` function is used to call a Decode As dissector.
         unsafe {
             epan_sys::dissector_try_payload(subdissector, args.tvb, args.pinfo, args.proto_root)
                 as _
@@ -1312,65 +1363,34 @@ impl SubdissectorKey for () {
     }
 }
 
-impl SubdissectorKey for u16 {
-    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
-        dtables.get_or_create_integer_table(
-            proto_id,
-            name,
-            epan_sys::ftenum_FT_UINT16,
-            epan_sys::field_display_e_BASE_DEC as _,
-        );
-    }
-
-    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
-        dissector_try_uint(args, name, *self as _)
-    }
-}
-
-impl<'tvb, MaybeBytes: ?Sized, T> Dissect<'tvb, MaybeBytes> for (T,)
-where
-    T: Dissect<'tvb, MaybeBytes>,
-{
-    type Emit = <T as Dissect<'tvb, MaybeBytes>>::Emit;
-
-    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        <T as Dissect<'tvb, MaybeBytes>>::add_to_tree(args, fields)
-    }
-
-    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
-        <T as Dissect<'tvb, MaybeBytes>>::size(args, fields)
-    }
-
-    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
-        <T as Dissect<'tvb, MaybeBytes>>::register(args, ws_indices);
-    }
-
-    fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit {
-        <T as Dissect<'tvb, MaybeBytes>>::emit(args)
+/// Helper macro to implement `SubdissectorKey` for integer types, since the procedure is pretty
+/// much same for all of them.
+macro_rules! impl_subdissector_key_for_integer {
+    ($typ:ty, $ws_typ:expr $(,)?) => {
+        impl SubdissectorKey for $typ {
+            fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
+                create_integer_table_base_dec(proto_id, name, dtables, $ws_typ);
+            }
+            fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
+                dissector_try_uint(args, name, *self as _)
+            }
+        }
+    };
+    ($typ:ty, $ws_typ:expr, $($_typ:ty, $_ws_typ:expr),+ $(,)?) => {
+        impl_subdissector_key_for_integer!($typ, $ws_typ);
+        impl_subdissector_key_for_integer!($($_typ, $_ws_typ),+);
     }
 }
 
-impl<'tvb, MaybeBytes: ?Sized, T> Primitive<'tvb, MaybeBytes> for (T,)
-where
-    T: Primitive<'tvb, MaybeBytes>,
-{
-    fn add_to_tree_format_value(
-        args: &DissectorArgs<'_, 'tvb>,
-        s: &impl std::fmt::Display,
-        nr_bytes: usize,
-    ) -> usize {
-        <T as Primitive<'tvb, MaybeBytes>>::add_to_tree_format_value(args, s, nr_bytes)
-    }
-
-    fn save<'a>(
-        args: &DissectorArgs<'_, 'tvb>,
-        gstore: &mut FieldsStore<'tvb>,
-        lstore: &mut FieldsStore<'a>,
-    ) where
-        'tvb: 'a,
-    {
-        <T as Primitive<'tvb, MaybeBytes>>::save(args, gstore, lstore);
-    }
+impl_subdissector_key_for_integer! {
+    u8,  epan_sys::ftenum_FT_UINT8,
+    u16, epan_sys::ftenum_FT_UINT16,
+    u32, epan_sys::ftenum_FT_UINT32,
+    u64, epan_sys::ftenum_FT_UINT64,
+    i8,  epan_sys::ftenum_FT_INT8,
+    i16, epan_sys::ftenum_FT_INT16,
+    i32, epan_sys::ftenum_FT_INT32,
+    i64, epan_sys::ftenum_FT_INT64,
 }
 
 /// Adds a single field to the protocol tree. Internally, this uses the most basic
@@ -1467,9 +1487,6 @@ fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: 
     unsafe { *hf_index_ptr }
 }
 
-const DEFAULT_INT_ENCODING: u32 = epan_sys::ENC_BIG_ENDIAN;
-const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
-
 impl Dissect<'_, ()> for () {
     type Emit = ();
 
@@ -1520,6 +1537,9 @@ impl<'tvb> Primitive<'tvb, ()> for () {
         // nop
     }
 }
+
+const DEFAULT_INT_ENCODING: u32 = epan_sys::ENC_BIG_ENDIAN;
+const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
 
 impl Dissect<'_, ()> for u8 {
     type Emit = u8;
@@ -1763,6 +1783,7 @@ impl<'tvb> Primitive<'tvb, ()> for i16 {
         let value = <Self as Dissect<'_, ()>>::emit(args) as _;
         add_to_tree_format_value_int(args, 2, value, s);
     }
+
     fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
     where
         'tvb: 'a,
