@@ -1655,7 +1655,7 @@ impl Variant<'_> {
         self.options
             .rename
             .clone()
-            .unwrap_or(self.ident().to_string())
+            .unwrap_or(self.ident().to_wsdf_title_case())
     }
 }
 
