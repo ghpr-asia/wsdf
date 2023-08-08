@@ -9,7 +9,7 @@ version!("0.0.1", 4, 0);
     proto_desc = "Baby MoldUDP64 by wsdf",
     proto_name = "Baby MoldUDP64",
     proto_filter = "baby_moldudp64",
-    decode_from = ["udp.port"],
+    decode_from = "udp.port"
 )]
 struct BabyMoldUDP64 {
     session: [u8; 10],

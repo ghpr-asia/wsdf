@@ -11,7 +11,7 @@ protocol!(BabyDns);
     proto_desc = "Baby DNS by wsdf",
     proto_name = "Baby DNS",
     proto_filter = "baby_dns",
-    decode_from = [("baby_udp.port", 53)],
+    decode_from = [("udp.port", 53)],
 )]
 struct BabyDns {
     identification: u16,

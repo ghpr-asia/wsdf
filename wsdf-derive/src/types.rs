@@ -259,7 +259,7 @@ impl DataType {
                     (Some(_), Some(_), None) => {
                         return make_err(
                             segment,
-                            "cannot use `len_field` togther with `consume_with`",
+                            "cannot use `len_field` together with `consume_with`",
                         )
                     }
                 };

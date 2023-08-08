@@ -9,7 +9,7 @@ wsdf, you can write dissectors in a declarative way, all from within Rust.
 Here is what a complete dissector for UDP looks like:
 
 ```rust
-use wsdf::{protcol, version, Dissect, Proto};
+use wsdf::{protocol, version, Dissect, Proto};
 
 version!("0.0,1", 4, 0);
 protocol!(Udp);

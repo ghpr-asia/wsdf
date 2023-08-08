@@ -338,7 +338,7 @@
 //! # use wsdf::Dissect;
 //! #[derive(Dissect)]
 //! struct Scores {
-//!     #[wsdf(bytes)] // 32-octect byte string
+//!     #[wsdf(bytes)] // 32-octet byte string
 //!     id: [u8; 32],
 //!     scores: [u8; 32], // literally 32 separate octets
 //! }
@@ -1005,7 +1005,7 @@ pub struct DissectorArgs<'a, 'tvb> {
     pub prefix: &'a str,
 
     /// Last segment of the prefix, corresponding to the field's portion. Should correspond to the
-    /// field's identifer as in Rust code.
+    /// field's identifier as in Rust code.
     pub prefix_local: &'a str,
 
     /// Offset at which the next field is expected.
