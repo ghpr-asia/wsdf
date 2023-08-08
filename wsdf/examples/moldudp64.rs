@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
-use wsdf::{version, Protocol, ProtocolField};
+use wsdf::{protocol, version, Dissect, Proto};
 
 version!("0.0.1", 4, 0);
+protocol!(BabyMoldUDP64);
 
-#[derive(Protocol)]
+#[derive(Dissect, Proto)]
 #[wsdf(
     proto_desc = "Baby MoldUDP64 by wsdf",
     proto_name = "Baby MoldUDP64",
@@ -12,6 +13,7 @@ version!("0.0.1", 4, 0);
     decode_from = "udp.port"
 )]
 struct BabyMoldUDP64 {
+    #[wsdf(bytes)]
     session: [u8; 10],
     sequence_number: u64,
     message_count: u16,
@@ -19,9 +21,13 @@ struct BabyMoldUDP64 {
     messages: Vec<MessageBlock>,
 }
 
-#[derive(ProtocolField)]
+#[derive(Dissect)]
 struct MessageBlock {
     message_length: u16,
-    #[wsdf(len_field = "message_length", subdissector = "baby_moldudp64.payload")]
+    #[wsdf(
+        bytes,
+        len_field = "message_length",
+        subdissector = "baby_moldudp64.payload"
+    )]
     message_data: Vec<u8>,
 }
