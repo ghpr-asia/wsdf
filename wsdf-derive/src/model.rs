@@ -969,13 +969,11 @@ impl StructInnards {
         }
     }
 
-    pub(crate) fn add_to_tree_fn(&self, _dissect_options: &ProtocolFieldOptions) -> syn::ItemFn {
-        // @todo: account for _dissect_options
+    pub(crate) fn add_to_tree_fn(&self, dissect_options: &ProtocolFieldOptions) -> syn::ItemFn {
         let dissect_fields = self.dissect_fields();
         let fn_contents: Vec<syn::Stmt> = match self {
             StructInnards::UnitTuple(_) => parse_quote! {
                 #(#dissect_fields)*
-                offset - args.offset // return the size dissected
             },
             StructInnards::NamedFields { .. } => parse_quote! {
                 let parent = args.add_subtree();
@@ -987,15 +985,19 @@ impl StructInnards {
                 unsafe {
                     wsdf::epan_sys::proto_item_set_len(parent, (offset - args.offset) as _);
                 }
-                offset - args.offset // return the size dissected
             },
         };
+        let pre_dissect = pre_post_dissect(&dissect_options.pre_dissect);
+        let post_dissect = pre_post_dissect(&dissect_options.post_dissect);
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
                 // Some type-wide declarations.
                 let mut fields_local = wsdf::FieldsStore::default();
                 let offset = args.offset;
+                #(#pre_dissect)* // this should appear after offset is declared
                 #(#fn_contents)*
+                #(#post_dissect)*
+                offset - args.offset // return the number of bytes dissected
             }
         }
     }
@@ -1838,9 +1840,35 @@ impl<'a> Enum<'a> {
         parse_quote! {
             match args.variant {
                 #(#arms)*
-                Some(v) => panic!("unexpected variant {v} of {}", #enum_ident_str),
+                Some(v) => panic!("unexpected variant {} of {}", v, #enum_ident_str),
                 None => panic!("unable to determine variant of {}", #enum_ident_str),
             }
         }
+    }
+}
+
+/// Generates the code for pre/post dissect hooks.
+fn pre_post_dissect(funcs: &[syn::Path]) -> Vec<syn::Stmt> {
+    if funcs.is_empty() {
+        return Vec::new();
+    }
+    let decl_ctx: syn::Stmt = parse_quote! {
+        let ctx = wsdf::tap::Context {
+            field: (),
+            fields,
+            fields_local: &fields_local,
+            pinfo: args.pinfo,
+            packet: args.data,
+            offset,
+        };
+    };
+    let calls = funcs.iter().map(|func| -> syn::Stmt {
+        parse_quote! {
+            wsdf::tap::handle_tap(&ctx, #func);
+        }
+    });
+    parse_quote! {
+        #decl_ctx
+        #(#calls)*
     }
 }

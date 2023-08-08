@@ -381,28 +381,42 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
             Ok(ret.to_token_stream())
         }
         syn::Data::Enum(data) => {
-            let new_struct_defs = data.variants.iter().map(|variant| -> syn::ItemStruct {
+            let mut new_struct_defs: Vec<syn::ItemStruct> = Vec::with_capacity(data.variants.len());
+            for variant in &data.variants {
                 // We'll cheat for enums. For each variant, we create a new struct, and then derive
                 // Dissect on that struct.
+
+                let pre_dissect = filter_for_meta_value(&variant.attrs, META_PRE_DISSECT)?;
+                let pre_dissect: syn::Attribute = parse_quote! {
+                    #[wsdf(pre_dissect = [#(#pre_dissect),*])]
+                };
+                let post_dissect = filter_for_meta_value(&variant.attrs, META_POST_DISSECT)?;
+                let post_dissect: syn::Attribute = parse_quote! {
+                    #[wsdf(post_dissect = [#(#post_dissect),*])]
+                };
 
                 let newtype_ident = format_ident!("__{}", variant.ident);
                 let fields = &variant.fields;
 
-                match fields {
+                let struct_def: syn::ItemStruct = match fields {
                     syn::Fields::Named(_) => parse_quote! {
-                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident #fields
                     },
                     syn::Fields::Unnamed(_) => parse_quote! {
-                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident #fields;
                     },
                     syn::Fields::Unit => parse_quote! {
-                        #[derive(wsdf::Dissect)]
                         struct #newtype_ident;
                     },
-                }
-            });
+                };
+                let struct_def = parse_quote! {
+                    #[derive(wsdf::Dissect)]
+                    #pre_dissect
+                    #post_dissect
+                    #struct_def
+                };
+                new_struct_defs.push(struct_def);
+            }
 
             let enum_data = Enum::new(&input.ident, &data.variants)?;
             // And of course the actual implementation of Dissect for the enum type. It will call
