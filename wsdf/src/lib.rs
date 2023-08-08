@@ -1208,6 +1208,16 @@ impl DissectorArgs<'_, '_> {
     pub fn call_data_dissector(&self) -> usize {
         unsafe { epan_sys::call_data_dissector(self.tvb, self.pinfo, self.proto_root) as _ }
     }
+
+    /// Retrieves the list_len field or panic and die.
+    fn get_list_len_or_die(&self) -> usize {
+        self.list_len.unwrap_or_else(|| {
+            panic!(
+                "{} is a list, but its number of elements is unknown",
+                self.prefix
+            )
+        })
+    }
 }
 
 /// A type which represents a complete protocol.
@@ -2055,7 +2065,7 @@ where
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
-        for _ in 0..args.list_len.unwrap() {
+        for _ in 0..args.get_list_len_or_die() {
             size += <T as Dissect<()>>::add_to_tree(args, fields);
         }
         size
@@ -2063,7 +2073,7 @@ where
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
-        for _ in 0..args.list_len.unwrap() {
+        for _ in 0..args.get_list_len_or_die() {
             size += <T as Dissect<'tvb, ()>>::size(args, fields);
         }
         size
@@ -2084,7 +2094,7 @@ where
 
     fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
-        for _ in 0..args.list_len.unwrap() {
+        for _ in 0..args.get_list_len_or_die() {
             size += <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
         }
         size
@@ -2092,7 +2102,7 @@ where
 
     fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
         let mut size = 0;
-        for _ in 0..args.list_len.unwrap() {
+        for _ in 0..args.get_list_len_or_die() {
             size += <T as Dissect<'tvb, [u8]>>::size(args, fields);
         }
         size
