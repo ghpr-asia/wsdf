@@ -1,6 +1,5 @@
 //! This crate provides the derive macros for [wsdf](http://docs.rs/wsdf), along with some helpers.
 
-use model::Enum;
 use proc_macro::TokenStream;
 
 use quote::{format_ident, quote, ToTokens};
@@ -13,7 +12,7 @@ mod types;
 mod util;
 
 use crate::attributes::*;
-use crate::model::{DataRoot, StructInnards};
+use crate::model::{DataRoot, Enum, StructInnards};
 use crate::util::*;
 
 #[derive(Debug)]
@@ -383,6 +382,9 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
         }
         syn::Data::Enum(data) => {
             let new_struct_defs = data.variants.iter().map(|variant| -> syn::ItemStruct {
+                // We'll cheat for enums. For each variant, we create a new struct, and then derive
+                // Dissect on that struct.
+
                 let newtype_ident = format_ident!("__{}", variant.ident);
                 let fields = &variant.fields;
 
@@ -403,6 +405,8 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
             });
 
             let enum_data = Enum::new(&input.ident, &data.variants)?;
+            // And of course the actual implementation of Dissect for the enum type. It will call
+            // into functions from the dummy structs we created.
             let actual_impl = derive_dissect_impl_enum(&enum_data);
 
             Ok(quote! {
@@ -454,38 +458,61 @@ fn derive_dissect_impl_enum(enum_data: &Enum) -> syn::ItemImpl {
     }
 }
 
-struct SelectedProtocols(Vec<syn::Ident>);
+/// A list of types to be registered as protocols.
+struct SelectedProtocols(Vec<syn::Type>);
 
 impl Parse for SelectedProtocols {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let roots: Vec<syn::Ident> = input
-            .parse_terminated(syn::Ident::parse, syn::Token![,])?
+        let roots: Vec<syn::Type> = input
+            .parse_terminated(syn::Type::parse, syn::Token![,])?
             .into_iter()
             .collect();
         Ok(SelectedProtocols(roots))
     }
 }
 
+/// Selects some types to be registered as protocols.
+///
+/// Also declares some globals and sets up the plugin entry point which Wireshark will call.
+///
+/// ```rust
+/// use wsdf::{protocol, Proto, Dissect};
+///
+/// protocol!(Udp, UdpLite); // multiple protocols per dynamic library!
+///
+/// #[derive(Proto, Dissect)]
+/// #[wsdf(decode_from = [("ip.proto", 17)])]
+/// struct Udp { /* UDP fields */ }
+///
+/// #[derive(Proto, Dissect)]
+/// #[wsdf(decode_from = [("ip.proto", 136)])]
+/// struct UdpLite { /* UDP-lite fields */ }
+/// ```
 #[proc_macro]
 pub fn protocol(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SelectedProtocols);
 
-    let register_protos = input.0.iter().flat_map(|ty| -> Vec<syn::Stmt> {
-        parse_quote! {
-            static mut PLUG: wsdf::epan_sys::proto_plugin = wsdf::epan_sys::proto_plugin {
-                register_protoinfo: None,
-                register_handoff: None,
-            };
-            // SAFETY: this code is only called once in a single thread when wireshark starts
-            unsafe {
-                PLUG.register_protoinfo =
-                    std::option::Option::Some(<#ty as wsdf::Proto>::register_protoinfo);
-                PLUG.register_handoff =
-                    std::option::Option::Some(<#ty as wsdf::Proto>::register_handoff);
-                wsdf::epan_sys::proto_register_plugin(&PLUG);
+    let register_protos = input
+        .0
+        .iter()
+        .enumerate()
+        .flat_map(|(i, ty)| -> Vec<syn::Stmt> {
+            let plug = format_ident!("PLUG_{i}");
+            parse_quote! {
+                static mut #plug: wsdf::epan_sys::proto_plugin = wsdf::epan_sys::proto_plugin {
+                    register_protoinfo: None,
+                    register_handoff: None,
+                };
+                // SAFETY: this code is only called once in a single thread when wireshark starts
+                unsafe {
+                    #plug.register_protoinfo =
+                        std::option::Option::Some(<#ty as wsdf::Proto>::register_protoinfo);
+                    #plug.register_handoff =
+                        std::option::Option::Some(<#ty as wsdf::Proto>::register_handoff);
+                    wsdf::epan_sys::proto_register_plugin(&#plug);
+                }
             }
-        }
-    });
+        });
 
     quote! {
         thread_local! {
@@ -494,6 +521,7 @@ pub fn protocol(input: TokenStream) -> TokenStream {
             static __WSDF_DTABLES: std::cell::RefCell<wsdf::DissectorTables> = wsdf::DissectorTables::default().into();
         }
 
+        // Wireshark will call this function to load our plugin.
         #[no_mangle]
         extern "C" fn plugin_register() {
             #(#register_protos)*
@@ -519,10 +547,7 @@ fn derive_proto_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
 
     let proto_opts = init_options::<ProtocolOptions>(&input.attrs)?;
     if proto_opts.decode_from.is_empty() {
-        return make_err(
-            &input.ident,
-            "expected some way of registering with dissector table",
-        );
+        return make_err(&input.ident, "missing `decode_from` attribute");
     }
 
     let add_dissector = proto_opts.decode_from.iter().map(DecodeFrom::to_tokens);
@@ -542,9 +567,9 @@ fn derive_proto_impl(input: &syn::DeriveInput) -> syn::Result<syn::ItemImpl> {
         impl wsdf::Proto for #ident {
             #[allow(clippy::missing_safety_doc)]
             unsafe extern "C" fn dissect_main(
-                tvb: *mut epan_sys::tvbuff,
-                pinfo: *mut epan_sys::_packet_info,
-                tree: *mut epan_sys::_proto_node,
+                tvb: *mut wsdf::epan_sys::tvbuff,
+                pinfo: *mut wsdf::epan_sys::_packet_info,
+                tree: *mut wsdf::epan_sys::_proto_node,
                 data: *mut std::ffi::c_void,
             ) -> std::ffi::c_int {
                 // Clear columns
