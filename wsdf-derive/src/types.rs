@@ -194,7 +194,7 @@ impl DataType {
             DataType::Primitive(data) if data.typ == PrimitiveType::U8 => Self::new_primitive(
                 PrimitiveType::ByteArray {
                     size: SizeHint::Static(elem_count),
-                    subdissector: Self::extract_subdissector(opts),
+                    subdissector: opts.subdissector.clone(),
                 },
                 opts,
             ),
@@ -227,40 +227,41 @@ impl DataType {
         let elem_type = Self::from_syn_type(inner_type, opts)?;
         match elem_type {
             DataType::Primitive(data) if data.typ == PrimitiveType::U8 => {
-                let typ = match (&opts.size_hint, &opts.consume_bytes) {
-                    (None, None) => {
-                        return make_err(segment, "unable to determine size of these bytes");
+                let typ = match (&opts.size_hint, &opts.consume_with, &opts.subdissector) {
+                    (None, None, None) => {
+                        return make_err(segment, "unable to determine size of these bytes")
                     }
-                    (Some(field), None) => Self::new_primitive(
-                        PrimitiveType::ByteArray {
-                            size: SizeHint::Field(field.clone()),
-                            subdissector: None,
-                        },
-                        opts,
-                    ),
-                    (None, Some(consume)) => Self::new_collection(
+                    (None, None, Some(subd)) => Self::new_collection(
                         CollectionType::Bytes {
-                            consume: consume.clone(),
+                            consume: ConsumeBytes::Subdissector(subd.clone()),
                         },
                         opts,
                     ),
-                    (Some(field), Some(consume)) => match consume {
-                        ConsumeBytes::ConsumeWith(_) => {
-                            // Of course, if we already have a length indication, then we would not
-                            // expect a `consume_with` annotation.
-                            return make_err(
-                                segment,
-                                "conflicting indications of size for these bytes",
-                            );
-                        }
-                        ConsumeBytes::Subdissector(subdissector) => Self::new_primitive(
-                            PrimitiveType::ByteArray {
-                                size: SizeHint::Field(field.clone()),
-                                subdissector: Some(subdissector.clone()),
-                            },
-                            opts,
-                        ),
-                    },
+                    (None, Some(consume_fn), None) => Self::new_collection(
+                        CollectionType::Bytes {
+                            consume: ConsumeBytes::ConsumeWith(consume_fn.clone()),
+                        },
+                        opts,
+                    ),
+                    (_, Some(_), Some(_)) => {
+                        return make_err(
+                            segment,
+                            "only one of `consume_with` or `subdissector` can be specified",
+                        )
+                    }
+                    (Some(len_field), None, subd) => Self::new_primitive(
+                        PrimitiveType::ByteArray {
+                            size: SizeHint::Field(len_field.clone()),
+                            subdissector: subd.clone(),
+                        },
+                        opts,
+                    ),
+                    (Some(_), Some(_), None) => {
+                        return make_err(
+                            segment,
+                            "cannot use `len_field` together with `consume_with`",
+                        )
+                    }
                 };
                 Ok(typ)
             }
@@ -276,16 +277,6 @@ impl DataType {
                 ))
             }
         }
-    }
-
-    /// Extracts the subdissector out of a `consume_bytes` option, if present.
-    fn extract_subdissector(opts: &FieldOptions) -> Option<Subdissector> {
-        opts.consume_bytes
-            .clone()
-            .and_then(|consume| match consume {
-                ConsumeBytes::Subdissector(subdissector) => Some(subdissector),
-                ConsumeBytes::ConsumeWith(_) => None,
-            })
     }
 
     /// If this is a repeated field using a previous field for its length, returns that field.
@@ -757,6 +748,7 @@ impl DataType {
             let #WSDF_TAP_CTX = wsdf::tap::Context {
                 field: #field_val,
                 fields: #WSDF_FIELDS_STORE,
+                fields_local: &fields_local,
                 pinfo: #WSDF_PINFO,
                 packet: #WSDF_TVB_BUF,
                 offset: (#WSDF_START + #WSDF_OFFSET) as usize,

@@ -6,16 +6,13 @@
 //! [GitHub repo](https://github.com/ghpr-asia/wsdf/tree/main/wsdf/examples/).
 //!
 //! * [Getting started](#getting-started)
-//! * [Types](#types)
-//!     * [Mapping](#mapping)
-//!     * [User-defined types](#user-defined-types)
-//!     * [Decoding enums](#decoding-enums)
-//!     * [Lists](#lists)
-//! * [Taps and custom displays](#taps-and-custom-displays)
-//!     * [Using `Fields`](#using-fields)
+//! * [Using derive](#using-derive)
+//!     * [The `Dissect` and `Proto` traits](#the-dissect-and-proto-traits)
+//!     * [`version!()` and `protocol!()`](#version-and-protocol)
+//!     * [Taps](#taps)
 //!     * [Custom displays](#custom-displays)
-//!         * [`decode_with`](#decode_with)
-//!         * [`consume_with`](#consume_with)
+//!     * [Decoding enums](#decoding-enums)
+//!     * [Handling bytes](#handling-bytes)
 //! * [Calling subdissectors](#calling-subdissectors)
 //! * [Attributes](#attributes)
 //!     * [Protocol attributes](#protocol-attributes)
@@ -31,11 +28,14 @@
 //!
 //! ```rust
 //! // lib.rs
-//! wsdf::version!("0.0.1", 4, 0);
+//! use wsdf::{protocol, version, Dissect, Proto};
 //!
-//! #[derive(wsdf::Protocol)]
+//! version!("0.0.1", 4, 0);
+//! protocol!(Udp);
+//!
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = [("ip.proto", 17)])]
-//! struct UDP {
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
 //!     length: u16,
@@ -45,12 +45,13 @@
 //! }
 //! ```
 //!
-//! * The **`wsdf::version!` macro** specifies the plugin version as 0.0.1, built for Wireshark
-//! version 4.0.X. This information is required by Wireshark when loading the plugin.
-//! * The protocol itself should **derive `wsdf::Protocol`**. Since this is UDP, the dissector is
-//! registered to the `"ip.proto"` dissector table, and also sets up the `"udp.port"` dissector
-//! table for subdissectors to use. More details about these annotations can be found in the
-//! sections below.
+//! * The **[`version`] macro** specifies the plugin version as 0.0.1, built for Wireshark version
+//! 4.0.X. This information is required by Wireshark when loading the plugin.
+//! * The **[`protocol`] macro** indicates that the `Udp` type should be registered as a protocol.
+//! Multiple types can be passed in like this.
+//! * The protocol itself should **derive [`Dissect`] and [`Proto`]**. Since this is UDP, the
+//! dissector is registered to the `"ip.proto"` dissector table, and also sets up the `"udp.port"`
+//! table. You will find more details about these attributes below.
 //!
 //! The crate type must be specified in `Cargo.toml`.
 //!
@@ -67,135 +68,67 @@
 //! Wireshark or tshark to load it upon startup. On Linux, this is at
 //! `~/.local/lib/wireshark/plugins/4.0/epan/`.
 //!
-//! # Types
+//! # Using derive
 //!
-//! ## Mapping
+//! ## The `Dissect` and `Proto` traits
 //!
-//! wsdf automatically maps some Rust types to Wireshark types.
+//! Each type which is to be dissected must implement [`Dissect`]; this is already implemented for
+//! some standard types. You should use the `#[derive(Dissect)]` macro for your own types. The
+//! derive macro should be able to handle most structs and enums. The [`Proto`] trait, on the other
+//! hand, is only intended for types which represent complete protocols.
 //!
-//! Rust type              | WS type    | WS encoding      | WS display
-//! -----------------------|------------|------------------|-----------------------------------------
-//! `u8` to `u64`          | `FT_UINT*` | `ENC_BIG_ENDIAN` | `BASE_DEC`
-//! `i8` to `i64`          | `FT_INT*`  | `ENC_BIG_ENDIAN` | `BASE_DEC`
-//! `Vec<u8>` or `[u8; _]` | `FT_BYTES` | `ENC_NA`         | `SEP_COLON \| BASE_SHOW_ASCII_PRINTABLE`
+//! The following re-write of the UDP dissector should clarify this distinction. `Checksum` is a
+//! user-defined type, but it does not represent a complete protocol - it simply appears somewhere
+//! in the protocol. The `Udp` struct, however, does represent the whole protocol, thus it derives
+//! `Proto` as well as `Dissect`.
 //!
-//! ## User-defined types
-//!
-//! Each user-defined type must derive `ProtocolField`.
+//! Note that only structs can derive `Proto` at the moment.
 //!
 //! ```rust
-//! #[derive(wsdf::Protocol)]
-//! #[wsdf(decode_from = "moldudp64.payload")]
-//! struct MyProtocol {
-//!     header: Header,
-//! }
-//!
-//! #[derive(wsdf::ProtocolField)]
-//! struct Header {
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(Udp);
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 17)])]
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
-//!     sequence: SequenceNumber,
+//!     length: u16,
+//!     checksum: Checksum,
+//!     #[wsdf(subdissector = ("udp.port", "dst_port", "src_port"))]
+//!     payload: Vec<u8>,
 //! }
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! struct SequenceNumber(u64);
+//! #[derive(Dissect)]
+//! struct Checksum(u16);
 //! ```
 //!
-//! You may use structs or enums as fields, but their contents must either be named fields or a
-//! unit tuple. Something like `struct PortPair(u16, u16)` cannot derive `Protocol` or
-//! `ProtocolField`.
+//! ## `version!()` and `protocol!()`
 //!
-//! The root type which derives `Protocol` must be a struct.
+//! The `version!()` macro declares some version symbols which Wireshark must read when registering
+//! the plugin. The `protocol!()` macro is used to select types to be registered as protocols in
+//! Wireshark. These types should implement `Proto`, and multiple types can be selected in this way.
 //!
-//! ## Decoding enums
+//! There should be exactly one `version!()` and one `protocol!()` macro used per library, as they
+//! declare global symbols.
 //!
-//! For enum fields, wsdf needs some help to know which variant to continue decoding the packet as.
-//! For now, the variant to use must be determined by a prior field, and the enum type must
-//! implement a method to determine the variant by returning the "index" of the selected variant.
-//! This method must be named `dispatch_*` by convention, where `*` is the field's name.
+//!```rust
+//! use wsdf::{protocol, version, Proto, Dissect};
 //!
-//! ```rust
-//! #[derive(wsdf::ProtocolField)]
-//! struct PacketInfo {
-//!     typ: u8,
-//!     #[wsdf(dispatch_field = "typ")]
-//!     data: Data,
-//! }
+//! // Declare plugin version 0.0.1, built for Wireshark version 4.0.
+//! version!("0.0.1", 4, 0);
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! enum Data {
-//!     Foo(u8),
-//!     Bar(u16),
-//!     Baz,
-//! }
+//! protocol!(Udp, UdpLite); // multiple protocols per dynamic library!
 //!
-//! impl Data {
-//!     fn dispatch_typ(typ: &u8) -> usize {
-//!         match *typ {
-//!             b'F' => 0, // Foo
-//!             b'B' => 1, // Bar
-//!             _ => 2,    // Baz
-//!         }
-//!     }
-//! }
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 17)])]
+//! struct Udp { /* UDP fields */ }
+//!
+//! #[derive(Proto, Dissect)]
+//! #[wsdf(decode_from = [("ip.proto", 136)])]
+//! struct UdpLite { /* UDP-lite fields */ }
 //! ```
 //!
-//! For large enums, it may be difficult to track the "indices" of each variant. Thus, wsdf
-//! provides a `Dispatch` helper macro.
-//!
-//! ```rust
-//! # #[derive(wsdf::ProtocolField)]
-//! # struct PacketInfo {
-//! #     typ: u8,
-//! #     #[wsdf(dispatch_field = "typ")]
-//! #     data: Data,
-//! # }
-//! #[derive(wsdf::ProtocolField, wsdf::Dispatch)]
-//! enum Data {
-//!     Foo(u8),
-//!     Bar(u16),
-//!     Baz,
-//! }
-//!
-//! impl Data {
-//!     fn dispatch_typ(typ: &u8) -> DataDispatch {
-//!         use DataDispatch::*;
-//!         match *typ {
-//!             b'F' => Foo,
-//!             b'B' => Bar,
-//!             _ => Baz,
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! This generates a new enum named `DataDispatch` which implements `Into<usize>`, which can be
-//! directly returned from the `dispatch_typ` function.
-//!
-//! ## Lists
-//!
-//! wsdf understands arrays and `Vec`s. You would use a `Vec` if the number of elements is unknown
-//! at compile time, but provided by another field in the protocol.
-//!
-//! ```rust
-//! #[derive(wsdf::Protocol)]
-//! #[wsdf(decode_from = "udp.port")]
-//! struct MoldUDP64 {
-//!     session: [u8; 10],
-//!     sequence: u64,
-//!     message_count: u16,
-//!     #[wsdf(len_field = "message_count")]
-//!     messages: Vec<MessageBlock>,
-//! }
-//! # #[derive(wsdf::ProtocolField)]
-//! # struct MessageBlock {
-//! #     len: u16,
-//! #     #[wsdf(len_field = "len")]
-//! #     data: Vec<u8>,
-//! # }
-//! ```
-//!
-//! # Taps and custom displays
+//! ## Taps
 //!
 //! wsdf features a `tap` attribute which allows you to register some function(s) to be called
 //! whenever the field is decoded. These functions follow the [Axum style magic
@@ -208,16 +141,17 @@
 //! * [`Fields`](tap::Fields), a map of the fields encountered so far
 //! * [`Offset`](tap::Offset), the current byte offset into the packet
 //! * [`Packet`](tap::Packet), the raw bytes of the packet
-//! * [`PacketNanos`](tap::PacketNanos), the nanosecond timestamp at which the packet was recorded
+//! * ...and more.
 //!
 //! Any permutation of the parameters is supported.
 //!
 //! ```rust
 //! use wsdf::tap::{Field, PacketNanos};
+//! use wsdf::Dissect;
 //!
-//! #[derive(wsdf::ProtocolField)]
+//! #[derive(Dissect)]
 //! struct IpAddr (
-//!     #[wsdf(tap = ["log_ts", "check_loopback", "slow_down"])]
+//!     #[wsdf(bytes, tap = ["log_ts", "check_loopback", "slow_down"])]
 //!     [u8; 4],
 //! );
 //!
@@ -237,7 +171,7 @@
 //! In this example, wsdf will invoke `log_ts`, `check_loopback`, and `slow_down`, in that order,
 //! when it encounters the field. Each function passed to the `tap` attribute must return `()`.
 //!
-//! ## Using `Fields`
+//! ### Using `Fields`
 //!
 //! Fields can be marked for saving via the `#[wsdf(save)]` attribute. You can then access their
 //! values through the [`Fields`](tap::Fields) parameter, which holds a key value store. The key to
@@ -247,8 +181,10 @@
 //!
 //! ```rust
 //! use wsdf::tap::Fields;
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(MarketByPrice);
 //!
-//! #[derive(wsdf::Protocol)]
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = "moldudp64.payload")]
 //! struct MarketByPrice {
 //!     nanos: u64,
@@ -258,7 +194,7 @@
 //!     updates: Vec<PriceUpdate>,
 //! }
 //!
-//! #[derive(wsdf::ProtocolField)]
+//! #[derive(Dissect)]
 //! struct PriceUpdate {
 //!     side: u8,
 //!     #[wsdf(save)]
@@ -270,11 +206,11 @@
 //! fn peek(Fields(fields): Fields) {
 //!     // `nanos` is an Option<&u64>, but it is not saved, so it should be `None`
 //!     let nanos = fields.get_u64("market_by_price.nanos");
-//!     assert_eq!(nanos, None);
+//!     assert!(nanos.is_none());
 //!
 //!     // `num_updates` is an Option<&u8>, and it is saved, it should be a `Some`
 //!     let num_updates = fields.get_u8("market_by_price.num_updates");
-//!     assert!(matches!(num_updates, Some(_)));
+//!     assert!(num_updates.is_some());
 //!
 //!     // `prices` is a `&[i32]`.
 //!     let prices = fields.get_i32_multi("market_by_price.updates.price");
@@ -284,33 +220,36 @@
 //!
 //! ## Custom displays
 //!
-//! By default, wsdf does not perform any additional formatting on fields. All formatting and
+//! By default, wsdf does not perform any additional formatting on fields, as all formatting and
 //! display is handled by Wireshark. However, you may wish to customize the way some fields appear
 //! in the UI. wsdf enables this via the `decode_with` and `consume_with` attributes, which are
-//! similar to taps. Their main differences from taps are
+//! similar to taps, in the sense that their parameters work the same way.
 //!
-//! * You can only have one `decode_with` or `consume_with` per field
-//! * `decode_with` functions must return something implementing `Display`
-//! * `consume_with` functions must return `(usize, T)` where `T` is anything implementing
-//! `Display`
+//! * You can only have one `decode_with` or `consume_with` per field.
+//! * They can only be used on fields implementing [`Primitive`].
+//!
+//! `decode_with` functions must return something implementing `Display`, which will used as the
+//! field's value in Wireshark's UI. You would choose `consume_with` instead if you need full
+//! control over the number of bytes consumed - `consume_with` functions must return `(usize, T)`
+//! where `T` is anything implementing `Display`.
 //!
 //! ### `decode_with`
 //!
-//! You may use `decode_with` to customize how a field appears in Wireshark's UI.
+//! In this example, we'll use `decode_with` to format an integer into a human-friendly string.
 //!
 //! ```rust
-//! use wsdf::tap::Field;
-//!
-//! #[derive(wsdf::ProtocolField)]
+//! # use wsdf::tap::Field;
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
 //! struct Order {
 //!     #[wsdf(decode_with = "decode_side")]
-//!     side: [u8; 1],
+//!     side: u8,
 //!     price: i32,
 //!     quantity: u64,
 //! }
 //!
-//! fn decode_side(Field(side): Field<&[u8]>) -> &'static str {
-//!     match side[0] {
+//! fn decode_side(Field(side): Field<u8>) -> &'static str {
+//!     match side {
 //!         b'B' => "Bid",
 //!         b'A' => "Ask",
 //!         _ => "Unknown",
@@ -321,7 +260,7 @@
 //! By default, the `side` field will appear as an ascii byte string in the UI (`B`, `A`). The
 //! `decode_side` function takes the value of `side` and returns a more user friendly display.
 //!
-//! In this example, our `decode_side` function returned a `&'static str`. But it can be anything
+//! In this example, the `decode_side` function returned a `&'static str`. But it can be anything
 //! which implements `Display`, so `String`, `Box<dyn Display>`, etc. are all okay.
 //!
 //! ### `consume_with`
@@ -335,17 +274,73 @@
 //!
 //! ```rust
 //! use wsdf::tap::{Offset, Packet};
+//! use wsdf::Dissect;
 //!
-//! #[derive(wsdf::ProtocolField)]
-//! struct MyProto {
-//!     #[wsdf(consume_with = "consume_bytes")]
-//!     xs: Vec<u8>,
-//! }
+//! #[derive(Dissect)]
+//! struct SomeData(#[wsdf(bytes, consume_with = "consume_bytes")] Vec<u8>);
 //!
 //! fn consume_bytes(Offset(offset): Offset, Packet(pkt): Packet) -> (usize, String) {
 //!     // Use the combination of the current offset and raw bytes from
 //!     // `Packet` to manually parse these bytes.
 //!     unimplemented!()
+//! }
+//! ```
+//!
+//! ## Decoding enums
+//!
+//! For enum fields, wsdf needs some help to know which variant to continue decoding the packet as.
+//! You must provide the `get_variant` attribute which registers a function to help determine the
+//! selected variant. This function follows the same parameter conventions as taps, but must return
+//! a `&'static str` matching one of the variant's names.
+//!
+//! ```rust
+//! use wsdf::{tap::FieldsLocal, Dissect};
+//!
+//! #[derive(Dissect)]
+//! struct OrderInfo {
+//!     #[wsdf(save)]
+//!     typ: u8,
+//!     #[wsdf(get_variant = "get_order_variant")]
+//!     order: Order,
+//! }
+//!
+//! #[derive(Dissect)]
+//! enum Order {
+//!     Bid {
+//!         price: i32,
+//!         quantity: u64,
+//!     },
+//!     Ask {
+//!         price: i32,
+//!         quantity: u64,
+//!     },
+//!     Unknown,
+//! }
+//!
+//! fn get_order_variant(FieldsLocal(fields): FieldsLocal) -> &'static str {
+//!     let typ = fields.get_u8("typ").unwrap();
+//!     match typ {
+//!         b'A' => "Ask",
+//!         b'B' => "Bid",
+//!         _ => "Unknown",
+//!     }
+//! }
+//! ```
+//!
+//! ## Handling bytes
+//!
+//! Most likely, you would represent bytes as a `Vec<u8>` or `[u8; _]`. However, these could also
+//! be interpreted as a list of literal octets, instead of one contiguous byte string. To help
+//! disambiguate, you must tag fields which should be interpreted as bytes with the `bytes`
+//! attribute.
+//!
+//! ```rust
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
+//! struct Scores {
+//!     #[wsdf(bytes)] // 32-octet byte string
+//!     id: [u8; 32],
+//!     scores: [u8; 32], // literally 32 separate octets
 //! }
 //! ```
 //!
@@ -358,7 +353,8 @@
 //! The first variant can be seen in the MoldUDP64 dissector.
 //!
 //! ```rust
-//! #[derive(wsdf::ProtocolField)]
+//! # use wsdf::Dissect;
+//! #[derive(Dissect)]
 //! struct MessageBlock {
 //!     message_length: u16,
 //!     #[wsdf(len_field = "message_length", subdissector = "moldudp64.payload")]
@@ -372,9 +368,11 @@
 //! The second variant can be seen in the UDP dissector.
 //!
 //! ```rust
-//! #[derive(wsdf::Protocol)]
+//! # use wsdf::{protocol, Dissect, Proto};
+//! # protocol!(Udp);
+//! #[derive(Dissect, Proto)]
 //! #[wsdf(decode_from = [("ip.proto", 17)])]
-//! struct UDP {
+//! struct Udp {
 //!     src_port: u16,
 //!     dst_port: u16,
 //!     length: u16,
@@ -419,7 +417,7 @@
 //!
 //! ## Type-level attributes
 //!
-//! These attributes can appear on any type which derives `Protocol` or `ProtocolField`.
+//! These attributes can appear on any type which derives `Dissect`.
 //!
 //! * `#[wsdf(pre_dissect = "...")]`
 //! * `#[wsdf(pre_dissect = ["...", ...])]`
@@ -455,6 +453,11 @@
 //! Mark a field to be saved, such that it becomes accessible from the [`Fields`](tap::Fields)
 //! parameter. See the section on [Using `Fields`](#using-fields) for more information.
 //!
+//! * `#[wsdf(bytes)]`
+//!
+//! Indicate that a field should be interpreted as a contiguous byte string. Meant for fields of
+//! type `Vec<u8>`, `&[u8]`, or `[u8; _]` to disambiguate them from literal lists of octets.
+//!
 //! * `#[wsdf(len_field = "...")]`
 //!
 //! Intended for fields of type `Vec<_>`. Must point to a prior integer field which specifies the
@@ -482,18 +485,16 @@
 //! `#[wsdf(display = "SEP_COLON" | "BASE_SHOW_ASCII_PRINTABLE")]` to mean "try to decode the bytes
 //! as ascii characters, failing which, show them as regular octets separated by a colon".
 //!
-//! * `#[wsdf(dispatch_field = "...")]`
+//! * `#[wsdf(get_variant = "...")]`
 //!
-//! For enum fields, specifies a previous field which is used to determine the variant. The enum
-//! type must implement a corresponding method to receive this field and return an integer
-//! representing the variant (the first is 0, the next is 1, etc.). See the section on [Decoding
-//! enums](#decoding-enums) for more information.
+//! For enum fields, specifies a function which is used to determine the variant. The function must
+//! return a `&'static str` matching one of the variant names.
 //!
 //! * `#[wsdf(tap = "...")]`
 //! * `#[wsdf(tap = ["...", ...])]`
 //!
-//! Specifies the path to function(s) to inspect the packet. See the section on
-//! [Taps](#taps-and-custom-displays) for more information.
+//! Specifies the path to function(s) to inspect the packet. See the section on [Taps](#taps) for
+//! more information.
 //!
 //! * `#[wsdf(decode_with = "...")]`
 //!
@@ -527,10 +528,10 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void, CString};
 
 pub use epan_sys;
-pub use wsdf_derive::{version, Dispatch, Protocol, ProtocolField};
+pub use wsdf_derive::{protocol, version, Dispatch, Dissect, Proto, Protocol, ProtocolField};
 
 /// Relevant to enum types only. Represents how the variant should be picked.
 #[doc(hidden)]
@@ -717,11 +718,12 @@ pub mod tap {
     use crate::FieldsStore;
 
     /// A context holding packet information we might care about. *Meant for internal use*.
-    #[derive(Clone)]
+    #[derive(Clone, Copy)]
     #[doc(hidden)]
     pub struct Context<'a, T: Clone> {
         pub field: T,
         pub fields: &'a FieldsStore<'a>,
+        pub fields_local: &'a FieldsStore<'a>,
         pub pinfo: *mut epan_sys::_packet_info,
         pub packet: &'a [u8],
         pub offset: usize,
@@ -749,6 +751,9 @@ pub mod tap {
     /// A key value store of previous fields encountered and saved. Each key is the Wireshark
     /// filter for that field.
     pub struct Fields<'a>(pub &'a FieldsStore<'a>);
+    /// A key value store of fields encountered within the data type. Each key is the identifier of
+    /// the field as in Rust code.
+    pub struct FieldsLocal<'a>(pub &'a FieldsStore<'a>);
     /// The nanosecond timestamp recorded in the packet capture data.
     pub struct PacketNanos(pub i64);
     /// Raw bytes of the packet.
@@ -775,6 +780,12 @@ pub mod tap {
     impl<'a, T: Clone> FromContext<'a, T> for Fields<'a> {
         fn from_ctx(ctx: &Context<'a, T>) -> Self {
             Self(ctx.fields)
+        }
+    }
+
+    impl<'a, T: Clone> FromContext<'a, T> for FieldsLocal<'a> {
+        fn from_ctx(ctx: &Context<'a, T>) -> Self {
+            Self(ctx.fields_local)
         }
     }
 
@@ -816,6 +827,7 @@ pub mod tap {
     impl_handler!(Arg1, Arg2, Arg3);
     impl_handler!(Arg1, Arg2, Arg3, Arg4);
     impl_handler!(Arg1, Arg2, Arg3, Arg4, Arg5);
+    impl_handler!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6);
 
     #[doc(hidden)]
     pub fn handle_tap<'a, T, Args, H>(ctx: &Context<'a, T>, handler: H)
@@ -837,10 +849,21 @@ pub mod tap {
     }
 
     #[doc(hidden)]
-    pub fn handle_consume_with<'a, Args, Ret, H>(ctx: &Context<'a, ()>, handler: H) -> (usize, Ret)
+    pub fn handle_consume_with<'a, T, Args, Ret, H>(
+        ctx: &Context<'a, T>,
+        handler: H,
+    ) -> (usize, Ret)
     where
-        H: Handler<'a, (), Args, (usize, Ret)>,
+        T: Clone,
+        H: Handler<'a, T, Args, (usize, Ret)>,
         Ret: std::fmt::Display,
+    {
+        handler.call(ctx)
+    }
+
+    pub fn handle_get_variant<'a, Args, H>(ctx: &Context<'a, ()>, handler: H) -> &'static str
+    where
+        H: Handler<'a, (), Args, &'static str>,
     {
         handler.call(ctx)
     }
@@ -955,6 +978,1367 @@ impl<'a> FieldsStore<'a> {
             .entry(filter.to_string())
             .or_default()
             .push(value);
+    }
+}
+
+/// Collection of data which may be needed when dissecting a type.
+///
+/// Let's keep this type trivially copy-able.
+#[derive(Clone, Copy)]
+pub struct DissectorArgs<'a, 'tvb> {
+    /// The previously registered header field indices. Keyed by wireshark's filter strings.
+    pub hf_indices: &'tvb HfIndices,
+
+    /// The previously registered ett indices. Keyed by wireshark's filter strings.
+    pub etts: &'tvb EttIndices,
+
+    pub dtables: &'tvb DissectorTables,
+
+    pub tvb: *mut epan_sys::tvbuff,
+    pub pinfo: *mut epan_sys::packet_info,
+    pub proto_root: *mut epan_sys::proto_tree,
+
+    /// A slice of the entire packet.
+    pub data: &'tvb [u8],
+
+    /// Wireshark filter string for the next expected field.
+    pub prefix: &'a str,
+
+    /// Last segment of the prefix, corresponding to the field's portion. Should correspond to the
+    /// field's identifier as in Rust code.
+    pub prefix_local: &'a str,
+
+    /// Offset at which the next field is expected.
+    pub offset: usize,
+
+    /// Parent node under which the next field should be added.
+    pub parent: *mut epan_sys::proto_tree,
+
+    /// A dispatch index, iff the field is an enum.
+    pub variant: Option<&'static str>,
+
+    /// The length of the field, iff the field is a list with length determined at runtime.
+    pub list_len: Option<usize>,
+
+    /// Encoding for the field, if any.
+    pub ws_enc: Option<u32>,
+}
+
+/// Data required when registering fields.
+#[derive(Clone, Copy)]
+pub struct RegisterArgs<'a> {
+    /// The protocol ID.
+    pub proto_id: c_int,
+
+    /// Name for the field.
+    pub name: *const c_char,
+
+    /// Wireshark filter string for the field.
+    pub prefix: &'a str,
+
+    /// Description for the field. Would be a null pointer if there is no description.
+    pub blurb: *const c_char,
+
+    /// Custom picked wireshark type, if any.
+    pub ws_type: Option<c_uint>,
+
+    /// Custom picked wireshark display, if any.
+    pub ws_display: Option<c_int>,
+}
+
+/// A key-value store of wireshark filter strings to registered hf indices.
+#[derive(Default)]
+pub struct HfIndices(HashMap<String, c_int>);
+
+/// A key-value store of wireshark filter strings to ett indices.
+#[derive(Default)]
+pub struct EttIndices(HashMap<String, c_int>);
+
+/// A key-value store of dissector table names e.g. "udp.port" to its dissector table pointer.
+#[derive(Default)]
+pub struct DissectorTables(HashMap<&'static str, *mut epan_sys::dissector_table>);
+
+impl HfIndices {
+    /// Creates a hf index for the current prefix as a text node. Intended for subtree roots with
+    /// no associated type. If an index for the prefix already exists, simply returns it.
+    pub fn get_or_create_text_node(&mut self, args: &RegisterArgs) -> c_int {
+        if self.0.contains_key(args.prefix) {
+            return self.0[args.prefix];
+        }
+
+        // Since this is a text node, the display type should be BASE_NONE, and the wireshark type
+        // should be FT_NONE, if either of them happen to be set.
+        debug_assert!(
+            args.ws_display.is_none()
+                || args.ws_display == Some(epan_sys::field_display_e_BASE_NONE as _)
+        );
+        debug_assert!(args.ws_type.is_none() || args.ws_type == Some(epan_sys::ftenum_FT_NONE));
+
+        let idx = register_hf_index(
+            args,
+            epan_sys::field_display_e_BASE_NONE as _,
+            epan_sys::ftenum_FT_NONE,
+        );
+        self.0.insert(args.prefix.to_string(), idx);
+        idx
+    }
+
+    pub fn get(&self, prefix: &str) -> Option<c_int> {
+        self.0.get(prefix).copied()
+    }
+
+    pub fn insert(&mut self, prefix: &str, idx: c_int) -> Option<c_int> {
+        self.0.insert(prefix.to_string(), idx)
+    }
+}
+
+impl EttIndices {
+    /// Creates an ett index for the current prefix. If an index for the prefix already exists,
+    /// simply returns it.
+    pub fn get_or_create_ett(&mut self, args: &RegisterArgs) -> c_int {
+        if self.0.contains_key(args.prefix) {
+            return self.0[args.prefix];
+        }
+        let ett_index_ptr = Box::leak(Box::new(-1)) as *mut _;
+        unsafe {
+            epan_sys::proto_register_subtree_array([ett_index_ptr].as_mut_ptr(), 1);
+        }
+        let ett_index = unsafe { *ett_index_ptr };
+        debug_assert_ne!(ett_index, -1);
+        self.0.insert(args.prefix.to_string(), ett_index);
+        ett_index
+    }
+
+    pub fn get(&self, prefix: &str) -> Option<c_int> {
+        self.0.get(prefix).copied()
+    }
+}
+
+impl DissectorTables {
+    /// Tries to retrieve the pointer to a Decode As dissector table. If it is not found, registers
+    /// one with Wireshark.
+    pub fn get_or_create_decode_as(
+        &mut self,
+        proto_id: c_int,
+        name: &'static str,
+    ) -> *mut epan_sys::dissector_table {
+        if self.0.contains_key(&name) {
+            return self.0[&name];
+        }
+        let name_cstr = CString::new(name).unwrap();
+        let table_ptr = unsafe {
+            epan_sys::register_decode_as_next_proto(
+                proto_id,
+                name_cstr.as_ptr(),
+                name_cstr.as_ptr(),
+                None,
+            )
+        };
+        self.0.insert(name, table_ptr);
+        table_ptr
+    }
+
+    /// Creates an integer table if it does not exist. In theory this can be used to create tables
+    /// for strings as well, but we do not support that yet.
+    pub fn get_or_create_integer_table(
+        &mut self,
+        proto_id: c_int,
+        name: &'static str,
+        ws_type: c_uint,
+        ws_display: c_int,
+    ) -> *mut epan_sys::dissector_table {
+        if self.0.contains_key(&name) {
+            return self.0[&name];
+        }
+        let name_cstr =
+            Box::leak(CString::new(name).unwrap().into_boxed_c_str()).as_ptr() as *const c_char;
+        let table_ptr = unsafe {
+            epan_sys::register_dissector_table(name_cstr, name_cstr, proto_id, ws_type, ws_display)
+        };
+        self.0.insert(name, table_ptr);
+        table_ptr
+    }
+
+    pub fn get(&self, name: &'static str) -> Option<*mut epan_sys::dissector_table> {
+        self.0.get(name).copied()
+    }
+}
+
+/// Just a logical grouping of all the integers or pointers we need to set when registering the
+/// dissector plugin.
+pub struct WsIndices<'tvb> {
+    pub hf: &'tvb mut HfIndices,
+    pub ett: &'tvb mut EttIndices,
+    pub dtable: &'tvb mut DissectorTables,
+}
+
+impl DissectorArgs<'_, '_> {
+    /// Retrieves the hf index registered for the current prefix, if any.
+    pub fn get_hf_index(&self) -> Option<c_int> {
+        self.hf_indices.get(self.prefix)
+    }
+
+    /// Retrieves the ett index registered for the current prefix, if any.
+    pub fn get_ett_index(&self) -> Option<c_int> {
+        self.etts.get(self.prefix)
+    }
+
+    /// Adds a subtree using the current prefix. The size of the subtree is initialized to -1, and
+    /// the caller should ensure that it is fixed appropriately via `proto_item_set_len` eventually
+    /// when the size becomes known.
+    pub fn add_subtree(&self) -> *mut epan_sys::proto_item {
+        let subtree_hf_index = self.get_hf_index().unwrap();
+        let parent = unsafe {
+            epan_sys::proto_tree_add_item(
+                self.parent,
+                subtree_hf_index,
+                self.tvb,
+                self.offset as _,
+                -1,
+                epan_sys::ENC_NA,
+            )
+        };
+        unsafe {
+            epan_sys::proto_registrar_get_name(subtree_hf_index);
+            epan_sys::proto_item_add_subtree(parent, self.get_ett_index().unwrap());
+        }
+        parent
+    }
+
+    pub fn call_data_dissector(&self) -> usize {
+        unsafe { epan_sys::call_data_dissector(self.tvb, self.pinfo, self.proto_root) as _ }
+    }
+
+    /// Retrieves the list_len field or panic and die.
+    fn get_list_len_or_die(&self) -> usize {
+        self.list_len.unwrap_or_else(|| {
+            panic!(
+                "{} is a list, but its number of elements is unknown",
+                self.prefix
+            )
+        })
+    }
+}
+
+/// A type which represents a complete protocol.
+///
+/// Each method here is part of an API required by Wireshark.
+pub trait Proto {
+    /// Entry point for each packet.
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn dissect_main(
+        tvb: *mut epan_sys::tvbuff,
+        pinfo: *mut epan_sys::_packet_info,
+        tree: *mut epan_sys::_proto_node,
+        data: *mut c_void,
+    ) -> c_int;
+
+    /// Required by wireshark to register all information related to this protocol (protocol name,
+    /// fields, ett, etc.).
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn register_protoinfo();
+
+    /// Required by wireshark to know which lower-level protocols can be passed to this protocol.
+    #[allow(clippy::missing_safety_doc)]
+    unsafe extern "C" fn register_handoff();
+}
+
+/// A type which can be dissected.
+///
+/// This is different from [`Proto`]. `Dissect` should be implemented for all types which appear
+/// within the protocol, while `Proto` should only be derived for the types which represent
+/// complete protocols.
+pub trait Dissect<'tvb, MaybeBytes: ?Sized> {
+    /// We would like to query the value of some fields, e.g. `u8`. If the type supports this
+    /// querying, we set its `Emit` type. Otherwise, `Emit` can be set to `()`.
+    type Emit;
+
+    /// Adds the field to the protocol tree. Must return the number of bytes dissected.
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
+
+    /// Returns the number of bytes this field occupies in the packet.    
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize;
+
+    /// Registers the field. It is the responsibility of the implementor to save the hf index
+    /// and possibly the ett index into the two maps.
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices);
+
+    /// Returns the value associated with the field, if any.
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> Self::Emit;
+}
+
+/// A type which is simple enough to support some extensions to the [`Dissect`] trait.
+pub trait Primitive<'tvb, MaybeBytes: ?Sized>: Dissect<'tvb, MaybeBytes> {
+    /// Adds the field to the protocol tree using a custom string.
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    );
+
+    /// Saves the field into the fields store. Currently, two stores are supported, where `gstore`
+    /// applies to the entire packet while `lstore` is for the current type.
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a;
+}
+
+/// A type which can be used to key a dissector table. For example, integer values can be used to
+/// key the "udp.port" table.
+pub trait SubdissectorKey {
+    /// Create a table for the current type, and save it into `dtables`.
+    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables);
+
+    /// Given the current dissection state and the dissector table name, tries to use itself to key
+    /// the table and call a subdissector.
+    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize;
+}
+
+/// A type which can be subdissected. Should only apply to byte-ish types.
+pub trait Subdissect<'tvb>: Dissect<'tvb, [u8]> {
+    fn try_subdissector(
+        args: &DissectorArgs,
+        name: &'static str,
+        key: &impl SubdissectorKey,
+    ) -> usize {
+        key.try_subdissector(args, name)
+    }
+
+    /// Returns a pointer to a new TVB to hand to subdissectors.
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff;
+}
+
+fn setup_tvb_next_with_len(args: &DissectorArgs, len: Option<usize>) -> *mut epan_sys::tvbuff {
+    let tvb_reported_len = unsafe { epan_sys::tvb_reported_length(args.tvb) as usize };
+
+    // If no length is provided, we'll assume that the entire remaining packet should be passed to
+    // the subdissector.
+    let tvb_next_len = len.unwrap_or(tvb_reported_len - args.offset);
+    unsafe { epan_sys::tvb_new_subset_length(args.tvb, args.offset as _, tvb_next_len as _) }
+}
+
+impl Subdissect<'_> for Vec<u8> {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, args.list_len)
+    }
+}
+
+impl Subdissect<'_> for &[u8] {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, args.list_len)
+    }
+}
+
+impl<const N: usize> Subdissect<'_> for [u8; N] {
+    fn setup_tvb_next(args: &DissectorArgs) -> *mut epan_sys::tvbuff {
+        setup_tvb_next_with_len(args, Some(N))
+    }
+}
+
+/// Tries a uint dissector and returns the number of bytes consumed.
+fn dissector_try_uint(args: &DissectorArgs, name: &'static str, value: u32) -> usize {
+    let subdissector = args.dtables.get(name).unwrap();
+    unsafe {
+        epan_sys::dissector_try_uint(subdissector, value, args.tvb, args.pinfo, args.proto_root)
+            as _
+    }
+}
+
+fn create_integer_table_base_dec(
+    proto_id: c_int,
+    name: &'static str,
+    dtables: &mut DissectorTables,
+    ws_type: c_uint,
+) {
+    dtables.get_or_create_integer_table(
+        proto_id,
+        name,
+        ws_type,
+        epan_sys::field_display_e_BASE_DEC as _,
+    );
+}
+
+// We use `()` to represent the Decode As dissector tables, since those tables have no key. This is
+// just a matter of consistency and has no real meaning.
+impl SubdissectorKey for () {
+    fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
+        dtables.get_or_create_decode_as(proto_id, name);
+    }
+
+    fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
+        let subdissector = args.dtables.get(name).unwrap();
+        // The `dissector_try_payload` function is used to call a Decode As dissector.
+        unsafe {
+            epan_sys::dissector_try_payload(subdissector, args.tvb, args.pinfo, args.proto_root)
+                as _
+        }
+    }
+}
+
+/// Helper macro to implement `SubdissectorKey` for integer types, since the procedure is pretty
+/// much same for all of them.
+macro_rules! impl_subdissector_key_for_integer {
+    ($typ:ty, $ws_typ:expr $(,)?) => {
+        impl SubdissectorKey for $typ {
+            fn create_table(proto_id: c_int, name: &'static str, dtables: &mut DissectorTables) {
+                create_integer_table_base_dec(proto_id, name, dtables, $ws_typ);
+            }
+            fn try_subdissector(&self, args: &DissectorArgs, name: &'static str) -> usize {
+                dissector_try_uint(args, name, *self as _)
+            }
+        }
+    };
+    ($typ:ty, $ws_typ:expr, $($_typ:ty, $_ws_typ:expr),+ $(,)?) => {
+        impl_subdissector_key_for_integer!($typ, $ws_typ);
+        impl_subdissector_key_for_integer!($($_typ, $_ws_typ),+);
+    }
+}
+
+impl_subdissector_key_for_integer! {
+    u8,  epan_sys::ftenum_FT_UINT8,
+    u16, epan_sys::ftenum_FT_UINT16,
+    u32, epan_sys::ftenum_FT_UINT32,
+    u64, epan_sys::ftenum_FT_UINT64,
+    i8,  epan_sys::ftenum_FT_INT8,
+    i16, epan_sys::ftenum_FT_INT16,
+    i32, epan_sys::ftenum_FT_INT32,
+    i64, epan_sys::ftenum_FT_INT64,
+}
+
+/// Adds a single field to the protocol tree. Internally, this uses the most basic
+/// `proto_tree_add_item` function.
+fn add_to_tree_single_field(args: &DissectorArgs, size: usize, default_enc: u32) {
+    let hf_index = args.get_hf_index().unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_item(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            args.ws_enc.unwrap_or(default_enc),
+        );
+    }
+}
+
+/// Adds a uint type (u8, u16, etc.) to the protocol tree with a custom string.
+fn add_to_tree_format_value_uint(
+    args: &DissectorArgs,
+    size: usize,
+    value: c_uint,
+    s: &impl std::fmt::Display,
+) {
+    let hf_index = args.get_hf_index().unwrap();
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_uint_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            value,
+            fmt.as_ptr(),
+        );
+    }
+}
+
+/// Adds an int type (i8, i16, etc.) to the protocol tree with a custom string.
+fn add_to_tree_format_value_int(
+    args: &DissectorArgs,
+    size: usize,
+    value: c_int,
+    s: &impl std::fmt::Display,
+) {
+    let hf_index = args.get_hf_index().unwrap();
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+    unsafe {
+        epan_sys::proto_tree_add_int_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            size as _,
+            value,
+            fmt.as_ptr(),
+        );
+    }
+}
+
+/// Registers a hf index.
+fn register_hf_index(args: &RegisterArgs, default_display: c_int, default_type: c_uint) -> c_int {
+    let hf_index_ptr = Box::leak(Box::new(-1)) as *mut _;
+    let abbrev =
+        Box::leak(CString::new(args.prefix).unwrap().into_boxed_c_str()).as_ptr() as *const c_char;
+    let type_ = args.ws_type.unwrap_or(default_type);
+    let display = args.ws_display.unwrap_or(default_display);
+
+    let hf_register_info = epan_sys::hf_register_info {
+        p_id: hf_index_ptr,
+        hfinfo: epan_sys::header_field_info {
+            name: args.name,
+            abbrev,
+            type_,
+            display,
+            strings: std::ptr::null(),
+            bitmask: 0,
+            blurb: args.blurb,
+            id: -1,
+            parent: 0,
+            ref_type: epan_sys::hf_ref_type_HF_REF_TYPE_NONE,
+            same_name_prev_id: -1,
+            same_name_next: std::ptr::null_mut(),
+        },
+    };
+    let hfs = Box::leak(Box::new([hf_register_info])) as *mut _;
+
+    unsafe {
+        epan_sys::proto_register_field_array(args.proto_id, hfs, 1);
+    }
+    debug_assert_ne!(unsafe { *hf_index_ptr }, -1);
+    unsafe { *hf_index_ptr }
+}
+
+impl Dissect<'_, ()> for () {
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 0, epan_sys::ENC_NA);
+        0
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        0
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        let hf_index = register_hf_index(
+            args,
+            epan_sys::field_display_e_BASE_NONE as _,
+            epan_sys::ftenum_FT_NONE,
+        );
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(_args: &DissectorArgs) {}
+}
+
+impl<'tvb> Primitive<'tvb, ()> for () {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        let hf_index = args.get_hf_index().unwrap();
+        let field_name = unsafe { epan_sys::proto_registrar_get_name(hf_index) };
+        let fmt = CString::new(s.to_string()).unwrap();
+        unsafe {
+            epan_sys::proto_tree_add_none_format(
+                args.parent,
+                hf_index,
+                args.tvb,
+                args.offset as _,
+                nr_bytes as _,
+                "%s: %s\0".as_ptr() as *const c_char,
+                field_name,
+                fmt.as_ptr(),
+            );
+        }
+    }
+
+    fn save<'a>(_args: &DissectorArgs, _gstore: &mut FieldsStore, _lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        // nop
+    }
+}
+
+const DEFAULT_INT_ENCODING: u32 = epan_sys::ENC_BIG_ENDIAN;
+const DEFAULT_INT_DISPLAY: c_int = epan_sys::field_display_e_BASE_DEC as _;
+
+impl Dissect<'_, ()> for u8 {
+    type Emit = u8;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING);
+        1
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        1
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT8;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> u8 {
+        unsafe { epan_sys::tvb_get_guint8(args.tvb, args.offset as _) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for u8 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 1);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 1, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_u8(args.prefix, value);
+        lstore.insert_u8(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for u16 {
+    type Emit = u16;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING);
+        2
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        2
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT16;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> u16 {
+        unsafe { epan_sys::tvb_get_ntohs(args.tvb, args.offset as _) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for u16 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 2);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 2, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_u16(args.prefix, value);
+        lstore.insert_u16(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for u32 {
+    type Emit = u32;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING);
+        4
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        4
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT32;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> u32 {
+        unsafe { epan_sys::tvb_get_ntohl(args.tvb, args.offset as _) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for u32 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 4);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 4, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_u32(args.prefix, value);
+        lstore.insert_u32(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for u64 {
+    type Emit = u64;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING);
+        8
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        8
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_UINT64;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> u64 {
+        unsafe { epan_sys::tvb_get_ntoh64(args.tvb, args.offset as _) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for u64 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 8);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_uint(args, 8, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_u64(args.prefix, value);
+        lstore.insert_u64(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for i8 {
+    type Emit = i8;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 1, DEFAULT_INT_ENCODING);
+        1
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        1
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT8;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> i8 {
+        unsafe { epan_sys::tvb_get_gint8(args.tvb, args.offset as _) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for i8 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 1);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 1, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_i8(args.prefix, value);
+        lstore.insert_i8(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for i16 {
+    type Emit = i16;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 2, DEFAULT_INT_ENCODING);
+        2
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        2
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT16;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> i16 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint16(args.tvb, args.offset as _, enc) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for i16 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 2);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 2, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_i16(args.prefix, value);
+        lstore.insert_i16(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for i32 {
+    type Emit = i32;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 4, DEFAULT_INT_ENCODING);
+        4
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        4
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT32;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> i32 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint32(args.tvb, args.offset as _, enc) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for i32 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 4);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 4, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_i32(args.prefix, value);
+        lstore.insert_i32(args.prefix_local, value);
+    }
+}
+
+impl Dissect<'_, ()> for i64 {
+    type Emit = i64;
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        add_to_tree_single_field(args, 8, DEFAULT_INT_ENCODING);
+        8
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        8
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_INT64;
+
+        let hf_index = register_hf_index(args, DEFAULT_INT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs) -> i64 {
+        let enc = args.ws_enc.unwrap_or(DEFAULT_INT_ENCODING);
+        unsafe { epan_sys::tvb_get_gint64(args.tvb, args.offset as _, enc) }
+    }
+}
+
+impl<'tvb> Primitive<'tvb, ()> for i64 {
+    fn add_to_tree_format_value(args: &DissectorArgs, s: &impl std::fmt::Display, nr_bytes: usize) {
+        debug_assert_eq!(nr_bytes, 8);
+
+        let value = <Self as Dissect<'_, ()>>::emit(args) as _;
+        add_to_tree_format_value_int(args, 8, value, s);
+    }
+
+    fn save<'a>(args: &DissectorArgs, gstore: &mut FieldsStore, lstore: &mut FieldsStore)
+    where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'_, ()>>::emit(args);
+        gstore.insert_i64(args.prefix, value);
+        lstore.insert_i64(args.prefix_local, value);
+    }
+}
+
+fn add_to_tree_format_value_bytes(
+    args: &DissectorArgs,
+    nr_bytes: usize,
+    s: &impl std::fmt::Display,
+) {
+    let hf_index = args.get_hf_index().unwrap();
+    let value = &args.data[args.offset..args.offset + nr_bytes];
+    let fmt = CString::new(ToString::to_string(s)).unwrap();
+
+    unsafe {
+        epan_sys::proto_tree_add_bytes_format_value(
+            args.parent,
+            hf_index,
+            args.tvb,
+            args.offset as _,
+            nr_bytes as _,
+            value.as_ptr(),
+            fmt.as_ptr(),
+        );
+    }
+}
+
+impl<'tvb, const N: usize> Dissect<'tvb, [u8]> for [u8; N] {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore<'tvb>) -> usize {
+        add_to_tree_single_field(args, N, epan_sys::ENC_NA);
+        N
+    }
+
+    fn size(_args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        N
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        const DEFAULT_DISPLAY: c_int =
+            (epan_sys::BASE_SHOW_ASCII_PRINTABLE | epan_sys::ENC_SEP_COLON) as _;
+        const DEFAULT_TYPE: c_uint = epan_sys::ftenum_FT_BYTES;
+
+        let hf_index = register_hf_index(args, DEFAULT_DISPLAY, DEFAULT_TYPE);
+        ws_indices.hf.insert(args.prefix, hf_index);
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        &args.data[args.offset..args.offset + N]
+    }
+}
+
+impl<'tvb, const N: usize> Primitive<'tvb, [u8]> for [u8; N] {
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) {
+        debug_assert_eq!(nr_bytes, N);
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s);
+    }
+
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
+        gstore.insert_bytes(args.prefix, value);
+        lstore.insert_bytes(args.prefix_local, value);
+    }
+}
+
+impl<'tvb> Dissect<'tvb, [u8]> for Vec<u8> {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs, _fields: &mut FieldsStore<'tvb>) -> usize {
+        let len = args.list_len.unwrap_or(args.data.len() - args.offset);
+        add_to_tree_single_field(args, len, epan_sys::ENC_NA);
+        len
+    }
+
+    fn size(args: &DissectorArgs, _fields: &mut FieldsStore) -> usize {
+        // @todo: clarify this length thing
+        args.list_len.unwrap_or(args.data.len() - args.offset)
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        // [u8; _] and Vec<u8> are the same when it comes to registration.
+        <[u8; 0] as Dissect<[u8]>>::register(args, ws_indices);
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        // @todo: clarify this length thing
+        let len = args.list_len.unwrap_or(args.data.len() - args.offset);
+        &args.data[args.offset..args.offset + len]
+    }
+}
+
+impl<'tvb> Primitive<'tvb, [u8]> for Vec<u8> {
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) {
+        debug_assert_eq!(nr_bytes, args.list_len.unwrap_or(nr_bytes));
+
+        add_to_tree_format_value_bytes(args, nr_bytes, s);
+    }
+
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
+        let value = <Self as Dissect<'tvb, [u8]>>::emit(args);
+        gstore.insert_bytes(args.prefix, value);
+        lstore.insert_bytes(args.prefix_local, value);
+    }
+}
+
+impl<'tvb> Dissect<'tvb, [u8]> for &[u8] {
+    type Emit = &'tvb [u8];
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::size(args, fields)
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::register(args, ws_indices)
+    }
+
+    fn emit(args: &DissectorArgs<'_, 'tvb>) -> &'tvb [u8] {
+        <Vec<u8> as Dissect<'tvb, [u8]>>::emit(args)
+    }
+}
+
+impl<'tvb> Primitive<'tvb, [u8]> for &[u8] {
+    fn add_to_tree_format_value(
+        args: &DissectorArgs<'_, 'tvb>,
+        s: &impl std::fmt::Display,
+        nr_bytes: usize,
+    ) {
+        <Vec<u8> as Primitive<'tvb, [u8]>>::add_to_tree_format_value(args, s, nr_bytes);
+    }
+
+    fn save<'a>(
+        args: &DissectorArgs<'_, 'tvb>,
+        gstore: &mut FieldsStore<'tvb>,
+        lstore: &mut FieldsStore<'a>,
+    ) where
+        'tvb: 'a,
+    {
+        <Vec<u8> as Primitive<'tvb, [u8]>>::save(args, gstore, lstore);
+    }
+}
+
+impl<'tvb, T> Dissect<'tvb, ()> for Vec<T>
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..args.get_list_len_or_die() {
+            size += <T as Dissect<()>>::add_to_tree(args, fields);
+        }
+        size
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..args.get_list_len_or_die() {
+            size += <T as Dissect<'tvb, ()>>::size(args, fields);
+        }
+        size
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl<'tvb, T> Dissect<'tvb, [u8]> for Vec<T>
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..args.get_list_len_or_die() {
+            size += <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+        }
+        size
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..args.get_list_len_or_die() {
+            size += <T as Dissect<'tvb, [u8]>>::size(args, fields);
+        }
+        size
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl<'tvb, T, const N: usize> Dissect<'tvb, ()> for [T; N]
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<'tvb, ()>>::add_to_tree(args, fields);
+        }
+        size
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<'tvb, ()>>::size(args, fields);
+        }
+        size
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl<'tvb, T, const N: usize> Dissect<'tvb, [u8]> for [T; N]
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<'tvb, [u8]>>::add_to_tree(args, fields);
+        }
+        size
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        let mut size = 0;
+        for _ in 0..N {
+            size += <T as Dissect<'tvb, [u8]>>::size(args, fields);
+        }
+        size
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl<'tvb, T> Dissect<'tvb, ()> for &[T]
+where
+    T: Dissect<'tvb, ()>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<T> as Dissect<'tvb, ()>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<T> as Dissect<()>>::size(args, fields)
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<()>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+impl<'tvb, T> Dissect<'tvb, [u8]> for &[T]
+where
+    T: Dissect<'tvb, [u8]>,
+{
+    type Emit = ();
+
+    fn add_to_tree(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<T> as Dissect<'tvb, [u8]>>::add_to_tree(args, fields)
+    }
+
+    fn size(args: &DissectorArgs<'_, 'tvb>, fields: &mut FieldsStore<'tvb>) -> usize {
+        <Vec<T> as Dissect<[u8]>>::size(args, fields)
+    }
+
+    fn register(args: &RegisterArgs, ws_indices: &mut WsIndices) {
+        <T as Dissect<[u8]>>::register(args, ws_indices);
+    }
+
+    fn emit(_args: &DissectorArgs) -> Self::Emit {}
+}
+
+#[cfg(test)]
+mod test_with_dummy_proto {
+    use super::*;
+    use std::sync::Once;
+
+    macro_rules! cstr {
+        ($x:expr) => {
+            concat!($x, '\0').as_ptr() as *const std::ffi::c_char
+        };
+    }
+
+    static INIT_DUMMY_PROTOCOL: Once = Once::new();
+    static mut DUMMY_PROTOCOL_ID: c_int = -1;
+
+    /// Registers a dummy protocol with wireshark.
+    fn init_proto() {
+        INIT_DUMMY_PROTOCOL.call_once(|| unsafe {
+            DUMMY_PROTOCOL_ID = epan_sys::proto_register_protocol(
+                cstr!("Dummy Protocol"),
+                cstr!("Dummy Protocol"),
+                cstr!("dummy_proto"),
+            );
+            assert_ne!(DUMMY_PROTOCOL_ID, -1);
+        });
+    }
+
+    fn get_dummy_proto_reg_args() -> RegisterArgs<'static> {
+        RegisterArgs {
+            proto_id: unsafe { DUMMY_PROTOCOL_ID },
+            name: cstr!("Dummy Protocol"),
+            prefix: "dummy_proto",
+            blurb: std::ptr::null(),
+            ws_type: None,
+            ws_display: None,
+        }
+    }
+
+    /// Checks the a hf index is not -1, and that when queried, it returns a non-null pointer to a
+    /// header_field_info struct.
+    macro_rules! assert_hf_ok {
+		($idx:expr $(,)?) => {
+			assert_ne!($idx, -1);
+			assert_ne!(unsafe { epan_sys::proto_registrar_get_nth($idx as _) }, std::ptr::null_mut());
+		};
+		($idx:expr, $($idxs:expr),+ $(,)?) => {
+			assert_hf_ok!($idx);
+			assert_hf_ok!($($idxs),+);
+		}
+	}
+
+    #[test]
+    fn can_insert_hf() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+        let idx = hf_indices.get_or_create_text_node(&args);
+
+        assert_hf_ok!(idx);
+    }
+
+    #[test]
+    fn can_insert_ett() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+        let idx = ett_indices.get_or_create_ett(&args);
+
+        assert_ne!(idx, -1);
+    }
+
+    #[test]
+    fn can_insert_multiple_hfs() {
+        init_proto();
+        let mut args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+        let idx1 = hf_indices.get_or_create_text_node(&args);
+        args.prefix = "dummy_proto2";
+        let idx2 = hf_indices.get_or_create_text_node(&args);
+
+        assert_ne!(idx1, idx2);
+        assert_hf_ok!(idx1, idx2);
+    }
+
+    #[test]
+    fn can_insert_multiple_etts() {
+        init_proto();
+        let mut args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+        let idx1 = ett_indices.get_or_create_ett(&args);
+        args.prefix = "dummy_proto2";
+        let idx2 = ett_indices.get_or_create_ett(&args);
+
+        assert_ne!(idx1, idx2);
+    }
+
+    #[test]
+    fn hf_indices_are_idempotent() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut hf_indices = HfIndices::default();
+
+        let idx1 = hf_indices.get_or_create_text_node(&args);
+        let idx2 = hf_indices.get_or_create_text_node(&args);
+
+        assert_eq!(idx1, idx2);
+        assert_hf_ok!(idx1);
+    }
+
+    #[test]
+    fn ett_indices_are_idempotent() {
+        init_proto();
+        let args = get_dummy_proto_reg_args();
+
+        let mut ett_indices = EttIndices::default();
+
+        let idx1 = ett_indices.get_or_create_ett(&args);
+        let idx2 = ett_indices.get_or_create_ett(&args);
+
+        assert_eq!(idx1, idx2);
     }
 }
 

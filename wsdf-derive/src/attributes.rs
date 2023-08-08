@@ -57,6 +57,7 @@ pub(crate) struct FieldOptions {
     /// For enum fields only. An identifier for a previous field which is used to determine the
     /// variant to decode as.
     pub(crate) dispatch: Option<syn::Ident>,
+    pub(crate) get_variant: Option<syn::Path>,
     pub(crate) taps: Vec<syn::Path>,
     /// Path to a custom function to decode this field.
     pub(crate) decode_with: Option<syn::Path>,
@@ -66,10 +67,12 @@ pub(crate) struct FieldOptions {
     /// and let it figure out the size.
     ///
     /// This is necessary for certain protocols, e.g. those which use TLV encoding.
-    pub(crate) consume_bytes: Option<ConsumeBytes>,
+    pub(crate) consume_with: Option<syn::Path>,
+    pub(crate) subdissector: Option<Subdissector>,
     /// Custom name for the field.
     pub(crate) rename: Option<String>,
     pub(crate) save: Option<bool>,
+    pub(crate) bytes: Option<bool>,
 }
 
 /// Options for an enum variant.
@@ -77,6 +80,8 @@ pub(crate) struct FieldOptions {
 pub(crate) struct VariantOptions {
     /// Custom name for the variant.
     pub(crate) rename: Option<String>,
+    pub(crate) pre_dissect: Vec<syn::Path>,
+    pub(crate) post_dissect: Vec<syn::Path>,
 }
 
 /// Some way of consuming and decoding bytes, when we don't know its size beforehand.
@@ -242,6 +247,7 @@ impl OptionBuilder for FieldOptions {
                 Some(ident) => match ident.to_string().as_str() {
                     META_HIDE => self.hidden = Some(true),
                     META_SAVE => self.save = Some(true),
+                    META_BYTES => self.bytes = Some(true),
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
             },
@@ -273,6 +279,11 @@ impl OptionBuilder for FieldOptions {
                         let dispatch = get_lit_str(&nv.value)?.value();
                         self.dispatch = Some(format_ident!("{}", dispatch));
                     }
+                    META_GET_VARIANT => {
+                        let get_variant = get_lit_str(&nv.value)?.value();
+                        let path = syn::parse_str::<syn::Path>(&get_variant)?;
+                        self.get_variant = Some(path);
+                    }
                     META_DECODE_WITH => {
                         let decode_with = get_lit_str(&nv.value)?.value();
                         self.decode_with = Some(syn::parse_str::<syn::Path>(&decode_with)?);
@@ -281,12 +292,16 @@ impl OptionBuilder for FieldOptions {
                     META_CONSUME_WITH => {
                         let consume_with = get_lit_str(&nv.value)?.value();
                         let path = syn::parse_str::<syn::Path>(&consume_with)?;
-                        self.consume_bytes = Some(ConsumeBytes::ConsumeWith(path));
+                        self.consume_with = Some(path);
                     }
                     META_SUBDISSECTOR => self.extract_subdissector(nv, meta)?,
                     META_RENAME => {
                         let rename = get_lit_str(&nv.value)?.value();
                         self.rename = Some(rename);
+                    }
+                    META_BYTES => {
+                        let bytes = get_lit_bool(&nv.value)?.value;
+                        self.bytes = Some(bytes);
                     }
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
@@ -334,9 +349,7 @@ impl FieldOptions {
             [] => return make_err(meta, "expected at least one item"),
             [decode_as] => {
                 let decode_as = get_lit_str(decode_as)?.value();
-                self.consume_bytes = Some(ConsumeBytes::Subdissector(Subdissector::DecodeAs(
-                    decode_as,
-                )));
+                self.subdissector = Some(Subdissector::DecodeAs(decode_as));
             }
             [table_name, items @ ..] => {
                 let table_name = get_lit_str(table_name)?.value();
@@ -347,11 +360,11 @@ impl FieldOptions {
                     fields.push(format_ident!("{}", field));
                 }
 
-                self.consume_bytes = Some(ConsumeBytes::Subdissector(Subdissector::Table {
+                self.subdissector = Some(Subdissector::Table {
                     table_name,
                     fields,
                     typ: SubdissectorTableType::Unknown,
-                }));
+                });
             }
         }
         Ok(())
@@ -368,6 +381,8 @@ impl OptionBuilder for VariantOptions {
                         let rename = get_lit_str(&nv.value)?.value();
                         self.rename = Some(rename);
                     }
+                    META_PRE_DISSECT => self.pre_dissect = parse_strings(&nv.value)?,
+                    META_POST_DISSECT => self.post_dissect = parse_strings(&nv.value)?,
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
             },
@@ -377,24 +392,26 @@ impl OptionBuilder for VariantOptions {
     }
 }
 
-const META_DECODE_FROM: &str = "decode_from";
-const META_PROTO_DESC: &str = "proto_desc";
-const META_PROTO_NAME: &str = "proto_name";
-const META_PROTO_FILTER: &str = "proto_filter";
-const META_HIDE: &str = "hide";
-const META_SAVE: &str = "save";
-const META_LEN: &str = "len_field";
-const META_WS_TYPE: &str = "typ";
-const META_WS_ENC: &str = "enc";
-const META_WS_DISPLAY: &str = "display";
-const META_DISPATCH: &str = "dispatch_field";
-const META_DECODE_WITH: &str = "decode_with";
-const META_TAP: &str = "tap";
-const META_CONSUME_WITH: &str = "consume_with";
-const META_SUBDISSECTOR: &str = "subdissector";
-const META_RENAME: &str = "rename";
-const META_PRE_DISSECT: &str = "pre_dissect";
-const META_POST_DISSECT: &str = "post_dissect";
+pub(crate) const META_DECODE_FROM: &str = "decode_from";
+pub(crate) const META_PROTO_DESC: &str = "proto_desc";
+pub(crate) const META_PROTO_NAME: &str = "proto_name";
+pub(crate) const META_PROTO_FILTER: &str = "proto_filter";
+pub(crate) const META_HIDE: &str = "hide";
+pub(crate) const META_SAVE: &str = "save";
+pub(crate) const META_LEN: &str = "len_field";
+pub(crate) const META_WS_TYPE: &str = "typ";
+pub(crate) const META_WS_ENC: &str = "enc";
+pub(crate) const META_WS_DISPLAY: &str = "display";
+pub(crate) const META_DISPATCH: &str = "dispatch_field";
+pub(crate) const META_GET_VARIANT: &str = "get_variant";
+pub(crate) const META_DECODE_WITH: &str = "decode_with";
+pub(crate) const META_TAP: &str = "tap";
+pub(crate) const META_CONSUME_WITH: &str = "consume_with";
+pub(crate) const META_SUBDISSECTOR: &str = "subdissector";
+pub(crate) const META_RENAME: &str = "rename";
+pub(crate) const META_PRE_DISSECT: &str = "pre_dissect";
+pub(crate) const META_POST_DISSECT: &str = "post_dissect";
+pub(crate) const META_BYTES: &str = "bytes";
 
 /// Extracts all the meta items from a list of attributes.
 pub(crate) fn get_meta_items(attrs: &[&syn::Attribute]) -> syn::Result<Vec<syn::Meta>> {
@@ -427,8 +444,17 @@ pub(crate) fn get_wsdf_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
     get_attrs(attrs, "wsdf")
 }
 
-/// Extracts the doc comment from an attribute, if any.
-pub(crate) fn get_docs(attr: &syn::Attribute) -> Option<String> {
+pub(crate) fn get_docs(attrs: &[syn::Attribute]) -> Option<String> {
+    let docs = attrs.iter().filter_map(get_doc).collect::<String>();
+    if docs.is_empty() {
+        None
+    } else {
+        Some(docs)
+    }
+}
+
+/// Extracts the doc comment contents from an attribute, if any.
+fn get_doc(attr: &syn::Attribute) -> Option<String> {
     match attr.meta {
         syn::Meta::NameValue(ref nv) => {
             if nv.path.segments.len() == 1 && nv.path.segments.last().unwrap().ident == *"doc" {
@@ -441,6 +467,26 @@ pub(crate) fn get_docs(attr: &syn::Attribute) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Given a list of attributes, checks the name = value meta items and takes all the values which
+/// match the provided meta name.
+pub(crate) fn filter_for_meta_value(
+    attrs: &[syn::Attribute],
+    meta_name: &str,
+) -> syn::Result<Vec<syn::Expr>> {
+    let meta_items = get_meta_items(get_wsdf_attrs(attrs).as_slice())?;
+    let ret = meta_items.into_iter().filter_map(|meta| {
+        if let syn::Meta::NameValue(nv) = meta {
+            if let Some(ident) = nv.path.get_ident() {
+                if ident.to_string().as_str() == meta_name {
+                    return Some(nv.value);
+                }
+            }
+        }
+        None
+    });
+    Ok(ret.collect())
 }
 
 #[cfg(test)]
@@ -460,7 +506,7 @@ mod test_attribute_parsing {
     #[test]
     fn get_docs_works() {
         let attr: syn::Attribute = parse_quote! { #[doc = "foo"] };
-        assert_eq!(get_docs(&attr), Some("foo".to_string()));
+        assert_eq!(get_docs(&[attr]), Some("foo".to_string()));
     }
 }
 
@@ -493,6 +539,12 @@ impl FieldDisplayPair {
             }
         };
         parse_quote! { #left as std::ffi::c_int | #right as std::ffi::c_int }
+    }
+}
+
+impl quote::ToTokens for FieldDisplayPair {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.to_expr().to_tokens(tokens)
     }
 }
 

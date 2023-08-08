@@ -6,12 +6,17 @@
 framework to generate Wireshark dissectors from your Rust data types. Using
 wsdf, you can write dissectors in a declarative way, all from within Rust.
 
-Here is what a dissector for UDP looks like:
+Here is what a complete dissector for UDP looks like:
 
 ```rust
-#[derive(wsdf::Protocol)]
+use wsdf::{protocol, version, Dissect, Proto};
+
+version!("0.0,1", 4, 0);
+protocol!(Udp);
+
+#[derive(Proto, Dissect)]
 #[wsdf(decode_from = [("ip.proto", 17)])]
-struct UDP {
+struct Udp {
     src_port: u16,
     dst_port: u16,
     length: u16,
