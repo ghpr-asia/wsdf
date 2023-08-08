@@ -6,7 +6,6 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
 use syn::parse_quote;
-use syn::punctuated::Punctuated;
 
 mod attributes;
 mod model;
@@ -403,7 +402,8 @@ fn derive_dissect_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
                 }
             });
 
-            let actual_impl = derive_dissect_impl_enum(&input.ident, &data.variants);
+            let enum_data = Enum::new(&input.ident, &data.variants)?;
+            let actual_impl = derive_dissect_impl_enum(&enum_data);
 
             Ok(quote! {
                 #(#new_struct_defs)*
@@ -437,12 +437,8 @@ fn derive_dissect_impl_struct(
     }
 }
 
-fn derive_dissect_impl_enum(
-    ident: &syn::Ident,
-    variants: &Punctuated<syn::Variant, syn::Token![,]>,
-) -> syn::ItemImpl {
-    let enum_data = Enum::new(ident, variants);
-
+fn derive_dissect_impl_enum(enum_data: &Enum) -> syn::ItemImpl {
+    let ident = enum_data.ident();
     let fn_add_to_tree = enum_data.add_to_tree_fn();
     let fn_size = enum_data.size_fn();
     let fn_register = enum_data.register_fn();

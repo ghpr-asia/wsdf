@@ -1618,15 +1618,50 @@ fn get_field_dissection_plans(fields: &[NamedField]) -> Vec<FieldDissectionPlan>
 
 pub(crate) struct Enum<'a> {
     ident: &'a syn::Ident,
-    variants: &'a Punctuated<syn::Variant, syn::Token![,]>,
+    variants: Vec<Variant<'a>>,
+}
+
+struct Variant<'a> {
+    data: &'a syn::Variant,
+    options: VariantOptions,
+}
+
+impl Variant<'_> {
+    fn ident(&self) -> &syn::Ident {
+        &self.data.ident
+    }
+
+    fn ui_name(&self) -> String {
+        self.options
+            .rename
+            .clone()
+            .unwrap_or(self.ident().to_string())
+    }
 }
 
 impl<'a> Enum<'a> {
     pub(crate) fn new(
         ident: &'a syn::Ident,
         variants: &'a Punctuated<syn::Variant, syn::Token![,]>,
-    ) -> Self {
-        Self { ident, variants }
+    ) -> syn::Result<Self> {
+        let mut xs = Vec::with_capacity(variants.len());
+
+        for variant in variants {
+            let options = init_options::<VariantOptions>(&variant.attrs)?;
+            xs.push(Variant {
+                data: variant,
+                options,
+            });
+        }
+
+        Ok(Self {
+            ident,
+            variants: xs,
+        })
+    }
+
+    pub(crate) fn ident(&self) -> &syn::Ident {
+        self.ident
     }
 
     fn decl_prefix_next(&self, variant: &syn::Variant) -> syn::Stmt {
@@ -1682,11 +1717,11 @@ impl<'a> Enum<'a> {
 
     pub(crate) fn register_fn(&self) -> syn::ItemFn {
         let register_stmts = self.variants.iter().flat_map(|variant| -> Vec<syn::Stmt> {
-            let name = variant.ident.to_string();
+            let name = variant.ui_name();
             let name_cstr: syn::Expr = cstr!(name);
-            let struct_name = format_ident!("__{}", variant.ident);
+            let struct_name = format_ident!("__{}", variant.ident());
 
-            let decl_prefix_next = self.decl_prefix_next(variant);
+            let decl_prefix_next = self.decl_prefix_next(variant.data);
             let decl_args_next: syn::Stmt = parse_quote! {
                 let args_next = wsdf::RegisterArgs {
                     proto_id: args.proto_id,
@@ -1713,10 +1748,10 @@ impl<'a> Enum<'a> {
 
     fn match_and_call_on_variant(&self, call: &syn::Path) -> Vec<syn::Stmt> {
         let arms = self.variants.iter().map(|variant| -> syn::Arm {
-            let name = variant.ident.to_string();
-            let decl_prefix_next = self.decl_prefix_next(variant);
-            let setup_args_next = Self::decl_dissector_args(variant);
-            let struct_name = format_ident!("__{}", variant.ident);
+            let name = variant.ident().to_string();
+            let decl_prefix_next = self.decl_prefix_next(variant.data);
+            let setup_args_next = Self::decl_dissector_args(variant.data);
+            let struct_name = format_ident!("__{}", variant.ident());
 
             parse_quote! {
                 Some(#name) => {
