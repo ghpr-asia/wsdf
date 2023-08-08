@@ -16,12 +16,9 @@ version!("0.0.1", 4, 0);
 )]
 struct Udp {
     src_port: u16,
-    #[wsdf(save, tap = "nop")]
     dst_port: u16,
     length: u16,
     checksum: u16,
     #[wsdf(bytes, subdissector = ("baby_udp.port", "src_port", "dst_port"))]
     payload: Vec<u8>,
 }
-
-fn nop() {}
