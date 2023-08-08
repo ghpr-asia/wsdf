@@ -856,6 +856,10 @@ const WSDF_VARIANT_DISSECT_FNS: IdentHelper = IdentHelper("__WSDF_VARIANT_DISSEC
 const WSDF_VARIANT_SUBTREE_LABELS: IdentHelper = IdentHelper("__WSDF_VARIANT_SUBTREE_LABELS");
 const WSDF_VARIANT_IDX: IdentHelper = IdentHelper("__wsdf_variant_idx");
 
+/// The "innards" of a struct-like object we care about. This is either a unit tuple or a regular
+/// thing with named fields.
+///
+/// This applies to structs of course, but also enum variants.
 pub(crate) enum StructInnards {
     UnitTuple(UnitTuple),
     NamedFields { fields: Vec<NamedField> },
@@ -869,12 +873,17 @@ pub(crate) struct NamedField {
     meta: FieldMeta,
 }
 
+/// Field metadata.
 #[derive(Clone)]
 pub(crate) struct FieldMeta {
-    pub(crate) ty: syn::Type,
-    pub(crate) docs: Option<String>,
-    pub(crate) options: FieldOptions,
+    ty: syn::Type,
+    docs: Option<String>,
+    options: FieldOptions,
 
+    /// For fields which are given to subdissectors, what the key type is. For Decode As
+    /// dissectors, this would be `()`, otherwise it could be, e.g. a u16 for "udp.port".
+    ///
+    /// If the field is not to be subdissected, should be None.
     subdissector_key_type: Option<syn::Type>,
 }
 
@@ -965,23 +974,27 @@ impl StructInnards {
         let dissect_fields = self.dissect_fields();
         let fn_contents: Vec<syn::Stmt> = match self {
             StructInnards::UnitTuple(_) => parse_quote! {
-                let offset = args.offset;
                 #(#dissect_fields)*
-                offset - args.offset
+                offset - args.offset // return the size dissected
             },
             StructInnards::NamedFields { .. } => parse_quote! {
-                let offset = args.offset;
                 let parent = args.add_subtree();
                 #(#dissect_fields)*
+
+                // When the subtree was created above, its size should have been uninitialized. We
+                // set it manually here, now that all fields have been dissected and we know its
+                // size.
                 unsafe {
                     wsdf::epan_sys::proto_item_set_len(parent, (offset - args.offset) as _);
                 }
-                offset - args.offset
+                offset - args.offset // return the size dissected
             },
         };
         parse_quote! {
             fn add_to_tree(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
+                // Some type-wide declarations.
                 let mut fields_local = wsdf::FieldsStore::default();
+                let offset = args.offset;
                 #(#fn_contents)*
             }
         }
@@ -989,6 +1002,9 @@ impl StructInnards {
 
     pub(crate) fn size_fn(&self) -> syn::ItemFn {
         let fn_contents: Vec<syn::Stmt> = match self {
+            // We use a trick here. We create the field dissection plan as per usual, but then
+            // modify its add_strategy to be hidden. This has the same effect as simply querying
+            // the field's size.
             StructInnards::UnitTuple(unit) => {
                 let mut plan = FieldDissectionPlan::from_unit_tuple(unit);
                 plan.add_strategy = AddStrategy::Hidden;
@@ -1010,7 +1026,8 @@ impl StructInnards {
             fn size(args: &wsdf::DissectorArgs<'_, 'tvb>, fields: &mut wsdf::FieldsStore<'tvb>) -> usize {
                 let mut fields_local = wsdf::FieldsStore::default();
                 let offset = args.offset;
-                let parent = args.parent; // doesn't matter where it points to
+                let parent = args.parent; // doesn't matter where it points to since we're not
+                                          // adding to the tree
                 #(#fn_contents)*
                 offset - args.offset
             }
@@ -1022,6 +1039,8 @@ impl StructInnards {
         let fn_contents: Vec<syn::Stmt> = match self {
             StructInnards::UnitTuple(_) => register_fields,
             StructInnards::NamedFields { .. } => parse_quote! {
+                // A group of named fields must be hung together under a new subtree. So we'll need
+                // to create it here (both the ETT and HF).
                 let _ = ws_indices.ett.get_or_create_ett(args);
                 let _ = ws_indices.hf.get_or_create_text_node(args);
 
@@ -1054,18 +1073,6 @@ impl UnitTuple {
         }
     }
 
-    fn blurb_expr(&self) -> syn::Expr {
-        let blurb_cstr = self.0.blurb_cstr();
-        parse_quote! {
-            if !args.blurb.is_null() { args.blurb }
-            else { #blurb_cstr }
-        }
-    }
-
-    fn call_inner_register_func(&self) -> syn::Stmt {
-        self.0.call_register_func()
-    }
-
     fn decl_dissector_args(&self) -> syn::Stmt {
         let ws_enc = self.0.ws_enc_as_expr();
         parse_quote! {
@@ -1089,6 +1096,19 @@ impl UnitTuple {
         }
     }
 
+    fn blurb_expr(&self) -> syn::Expr {
+        // For unit tuples, we would like to take the blurb from its "parent" field.
+        let blurb_cstr = self.0.blurb_cstr();
+        parse_quote! {
+            if !args.blurb.is_null() { args.blurb }
+            else { #blurb_cstr }
+        }
+    }
+
+    fn call_inner_register_func(&self) -> syn::Stmt {
+        self.0.call_register_func()
+    }
+
     fn dissect_field(&self) -> Vec<syn::Stmt> {
         let plan = FieldDissectionPlan::from_unit_tuple(self);
         self.dissect_field_with_plan(&plan)
@@ -1096,7 +1116,8 @@ impl UnitTuple {
 
     fn dissect_field_with_plan(&self, plan: &FieldDissectionPlan) -> Vec<syn::Stmt> {
         let decl_args_next = self.decl_dissector_args();
-        let var_name = format_ident!("__inner_value");
+        let var_name = format_ident!("__inner_value"); // just a random symbol to store the inner
+                                                       // field's value, if it is emitted
         plan.dissection_steps(&decl_args_next, &var_name)
     }
 }
@@ -1131,6 +1152,9 @@ impl NamedField {
     fn dissection_steps(&self, plan: &FieldDissectionPlan) -> Vec<syn::Stmt> {
         let decl_prefix_next = self.decl_prefix_next();
         let decl_args_next = self.decl_dissector_args();
+
+        // By convention, when a field is emitted, we'll store it in a variable named like so -
+        // just prepend two underscores.
         let var_name = format_ident!("__{}", self.ident);
 
         let steps = plan.dissection_steps(&decl_args_next, &var_name);
@@ -1210,6 +1234,10 @@ impl FieldMeta {
 
     fn call_register_func(&self) -> syn::Stmt {
         let field_ty = &self.ty;
+        // Most fields will just be registered as per normal (recursively via ::register). But some
+        // fields are to be subdissected.
+        //
+        // In which case we'll have to register the subdissector instead.
         match &self.options.subdissector {
             None => {
                 let maybe_bytes = self.maybe_bytes();
@@ -1288,6 +1316,9 @@ impl FieldOptions {
     fn get_variant_as_expr(&self) -> syn::Expr {
         match &self.get_variant {
             Some(get_variant) => parse_quote! {
+                // This ugly bit is just to get around some lifetime issues in the final code. We
+                // create a temporary context holding a field of `()` and pass that into context
+                // handler.
                 std::option::Option::Some(
                     wsdf::tap::handle_get_variant(&wsdf::tap::Context {
                         field: (),
@@ -1319,6 +1350,7 @@ impl FieldOptions {
     }
 }
 
+/// Contains all the information we need to generate the steps to dissect a field.
 struct FieldDissectionPlan<'a> {
     emit: bool,
     save: bool,
@@ -1329,16 +1361,23 @@ struct FieldDissectionPlan<'a> {
     meta: &'a FieldMeta,
 }
 
+/// How a field should be added to the protocol tree.
 enum AddStrategy {
     Subdissect(Subdissector),
     DecodeWith(syn::Path),
     ConsumeWith(syn::Path),
     Hidden,
+
+    /// Just add it plainly.
     Default,
 }
 
 impl AddStrategy {
     fn from_field_options(options: &FieldOptions) -> Self {
+        // @todo: this should be validated earlier, or perhaps we should return an error here
+        // instead of failing the assert.
+        //
+        // The idea is that at most one of these three should have been set.
         debug_assert!(matches!(
             (
                 &options.decode_with,
@@ -1535,6 +1574,8 @@ impl FieldDissectionPlan<'_> {
             Subdissector::Table {
                 table_name, fields, ..
             } => {
+                // Each field will be tried in sequence, and called only if none of the previous
+                // one successfully dissected > 0 bytes.
                 let try_fields = fields.iter().map(|field| -> syn::ExprIf {
                     let field_var_name = format_ident!("__{field}");
                     parse_quote! {
@@ -1567,6 +1608,7 @@ impl FieldDissectionPlan<'_> {
     }
 }
 
+/// Scans a list of named fields and sets the `subdissector_key_type` on each.
 fn assign_subdissector_key_types(fields: &[NamedField]) -> Vec<NamedField> {
     fields
         .iter()
@@ -1659,6 +1701,14 @@ impl Variant<'_> {
             .clone()
             .unwrap_or(self.ident().to_wsdf_title_case())
     }
+
+    fn blurb_expr(&self) -> syn::Expr {
+        let docs = get_docs(&self.data.attrs);
+        match docs {
+            Some(docs) => cstr!(docs),
+            None => parse_quote! { std::ptr::null() },
+        }
+    }
 }
 
 impl<'a> Enum<'a> {
@@ -1741,6 +1791,7 @@ impl<'a> Enum<'a> {
         let register_stmts = self.variants.iter().flat_map(|variant| -> Vec<syn::Stmt> {
             let name = variant.ui_name();
             let name_cstr: syn::Expr = cstr!(name);
+            let blurb = variant.blurb_expr();
             let struct_name = format_ident!("__{}", variant.ident());
 
             let decl_prefix_next = self.decl_prefix_next(variant.data);
@@ -1749,7 +1800,7 @@ impl<'a> Enum<'a> {
                     proto_id: args.proto_id,
                     name: #name_cstr,
                     prefix: &prefix_next,
-                    blurb: std::ptr::null(), // @todo
+                    blurb: #blurb,
                     ws_type: std::option::Option::None,
                     ws_display: std::option::Option::None,
                 };
