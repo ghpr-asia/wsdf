@@ -80,6 +80,8 @@ pub(crate) struct FieldOptions {
 pub(crate) struct VariantOptions {
     /// Custom name for the variant.
     pub(crate) rename: Option<String>,
+    pub(crate) pre_dissect: Vec<syn::Path>,
+    pub(crate) post_dissect: Vec<syn::Path>,
 }
 
 /// Some way of consuming and decoding bytes, when we don't know its size beforehand.
@@ -379,6 +381,8 @@ impl OptionBuilder for VariantOptions {
                         let rename = get_lit_str(&nv.value)?.value();
                         self.rename = Some(rename);
                     }
+                    META_PRE_DISSECT => self.pre_dissect = parse_strings(&nv.value)?,
+                    META_POST_DISSECT => self.post_dissect = parse_strings(&nv.value)?,
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
             },
