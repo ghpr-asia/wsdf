@@ -39,6 +39,7 @@ pub(crate) struct ProtocolOptions {
 pub(crate) struct ProtocolFieldOptions {
     pub(crate) pre_dissect: Vec<syn::Path>,
     pub(crate) post_dissect: Vec<syn::Path>,
+    pub(crate) heuristic_fn: Vec<syn::Path>,
 }
 
 /// Options for a field. A field may be a named field or a unit tuple element, in a struct or an
@@ -176,7 +177,7 @@ impl OptionBuilder for ProtocolOptions {
                     //
                     // Because we have Protocol : ProtocolField and they all share the same
                     // #[wsdf(...)] look.
-                    META_PRE_DISSECT | META_POST_DISSECT => (),
+                    META_PRE_DISSECT | META_POST_DISSECT | META_HEURISTIC_FN => (),
                     _ => return make_err(meta, "unrecognized attribute"),
                 },
             },
@@ -201,6 +202,7 @@ impl OptionBuilder for ProtocolFieldOptions {
                 Some(ident) => match ident.to_string().as_str() {
                     META_PRE_DISSECT => self.pre_dissect = parse_strings(&nv.value)?,
                     META_POST_DISSECT => self.post_dissect = parse_strings(&nv.value)?,
+                    META_HEURISTIC_FN => self.heuristic_fn = parse_strings(&nv.value)?,
                     // These meta items belong to ProtocolOptions. But they may appear in the same
                     // list of attributes.
                     META_PROTO_DESC | META_PROTO_NAME | META_PROTO_FILTER | META_DECODE_FROM => (),
@@ -413,6 +415,7 @@ const META_RENAME: &str = "rename";
 const META_PRE_DISSECT: &str = "pre_dissect";
 const META_POST_DISSECT: &str = "post_dissect";
 const META_HEURISTIC: &str = "heuristic";
+const META_HEURISTIC_FN: &str = "heuristic_fn";
 
 /// Extracts all the meta items from a list of attributes.
 pub(crate) fn get_meta_items(attrs: &[&syn::Attribute]) -> syn::Result<Vec<syn::Meta>> {

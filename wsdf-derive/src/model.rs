@@ -27,6 +27,7 @@ pub(crate) enum DataRoot<'a> {
 pub(crate) struct DataRootConfig {
     pre_dissect: Vec<syn::Path>,
     post_dissect: Vec<syn::Path>,
+    heuristic_fn: Vec<syn::Path>,
 }
 
 #[derive(Debug)]
@@ -263,6 +264,7 @@ impl<'a> DataRoot<'a> {
         let cfg = DataRootConfig {
             pre_dissect: opts.pre_dissect,
             post_dissect: opts.post_dissect,
+            heuristic_fn: opts.heuristic_fn,
         };
 
         match &input.data {
