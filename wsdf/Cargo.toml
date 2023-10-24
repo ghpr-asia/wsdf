@@ -33,3 +33,7 @@ crate-type = ["cdylib"]
 [[example]]
 name = "dns"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "heuristic"
+crate-type = ["cdylib"]
